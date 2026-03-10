@@ -1,0 +1,63 @@
+# ==========================================================
+# Cấu hình Git Ignore cho toàn bộ dự án Chatiffy
+# ==========================================================
+
+# 1. Hệ điều hành macOS (Tùy chọn hiển thị thư mục ẩn)
+**/.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+
+# 2. Node.js & Dependencies
+**/node_modules/
+npm-debug.log
+yarn-error.log
+yarn-debug.log
+
+# 3. Môi trường (Environment Variables) - RẤT QUAN TRỌNG
+**/.env
+**/.env.production
+**/.env.local
+**/.env.development.local
+**/.env.test.local
+**/.env.production.local
+
+# 4. Build output (Sản phẩm sau khi build)
+# Backend NestJS
+**/dist/
+**/dist-server/
+**/*.tsbuildinfo
+
+# Frontend Next.js
+**/.next/
+**/out/
+**/build/
+
+# 5. IDEs & Editors
+**/.vscode/
+**/.idea/
+**/*.swp
+**/*.swo
+**/.history/
+
+# 6. Prisma & Database
+**/prisma/db.sqlite
+**/prisma/db.sqlite-journal
+
+# 7. Log files
+**/logs
+**/*.log
+**/npm-debug.log*
+
+# 8. Temporary files (File tạm của macOS hoặc hệ thống)
+**/.tmp
+**/tmp
+
+# 9. Thư mục Tài liệu (Documentation & AI Skills) - KHÔNG ĐƯA LÊN MẠNG
+/prod/
+/skills/
+
+# Chú ý: 
+# Chúng ta commit file `docker-compose.yml` để dev khác có thể clone chạy được.
+# Giữ lại `package.json` và `package-lock.json` của cả frontend/backend.

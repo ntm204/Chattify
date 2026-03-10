@@ -1,0 +1,147 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum Status {
+  ONLINE
+  OFFLINE
+  BUSY
+  DO_NOT_DISTURB
+}
+
+enum FriendStatus {
+  PENDING
+  ACCEPTED
+  BLOCKED
+  DECLINED
+}
+
+enum ConversationType {
+  DIRECT
+  GROUP
+  CHANNEL
+}
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum FileType {
+  IMAGE
+  VIDEO
+  DOCUMENT
+  VOICE
+}
+
+model User {
+  id            String    @id @default(uuid()) @db.Uuid
+  email         String    @unique
+  phone         String?   @unique
+  passwordHash  String    @map("password_hash")
+  username      String    @unique
+  displayName   String    @map("display_name")
+  avatarUrl     String?   @map("avatar_url")
+  bio           String?
+  role          Role      @default(USER)
+  status        Status    @default(OFFLINE)
+  lastSeen      DateTime  @default(now()) @map("last_seen")
+  isVerified    Boolean   @default(false) @map("is_verified")
+  settings      Json?     @db.JsonB
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  // Quan hệ
+  sentFriendRequests     Friendship[]         @relation("Requester")
+  receivedFriendRequests Friendship[]         @relation("Receiver")
+  createdConversations   Conversation[]       @relation("CreatedBy")
+  memberships            ConversationMember[]
+  attachments            MediaAttachment[]
+
+  @@map("users")
+}
+
+model Friendship {
+  id          String       @id @default(uuid()) @db.Uuid
+  requesterId String       @map("requester_id") @db.Uuid
+  receiverId  String       @map("receiver_id") @db.Uuid
+  status      FriendStatus @default(PENDING)
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  requester User @relation("Requester", fields: [requesterId], references: [id], onDelete: Cascade)
+  receiver  User @relation("Receiver", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, receiverId])
+  @@map("friendships")
+}
+
+model Conversation {
+  id              String           @id @default(uuid()) @db.Uuid
+  type            ConversationType @default(DIRECT)
+  name            String?
+  description     String?
+  avatarUrl       String?          @map("avatar_url")
+  workspaceId     String?          @map("workspace_id") @db.Uuid
+  createdById     String           @map("created_by") @db.Uuid
+  metadata        Json?            @db.JsonB
+  pinnedMessageId String?          @map("pinned_message_id") // ID tham chiếu đến MongoDB Message
+  lastMessageAt   DateTime         @default(now()) @map("last_message_at")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  createdBy   User                 @relation("CreatedBy", fields: [createdById], references: [id])
+  members     ConversationMember[]
+  attachments MediaAttachment[]
+
+  @@index([lastMessageAt])
+  @@map("conversations")
+}
+
+model ConversationMember {
+  id                 String     @id @default(uuid()) @db.Uuid
+  conversationId     String     @map("conversation_id") @db.Uuid
+  userId             String     @map("user_id") @db.Uuid
+  role               MemberRole @default(MEMBER)
+  nickname           String?
+  joinedAt           DateTime   @default(now()) @map("joined_at")
+  leftAt             DateTime?  @map("left_at")
+  isMuted            Boolean    @default(false) @map("is_muted")
+  lastReadMessageId  String?    @map("last_read_message_id") // ID tham chiếu đến Mongo message
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@map("conversation_members")
+}
+
+model MediaAttachment {
+  id             String   @id @default(uuid()) @db.Uuid
+  conversationId String   @map("conversation_id") @db.Uuid
+  uploaderId     String   @map("uploader_id") @db.Uuid
+  messageId      String   @map("message_id") // Tham chiếu sang MongoDB
+  fileUrl        String   @map("file_url")
+  fileType       FileType @map("file_type")
+  fileSize       Int      @map("file_size")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  uploader     User         @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+
+  @@map("media_attachments")
+}
