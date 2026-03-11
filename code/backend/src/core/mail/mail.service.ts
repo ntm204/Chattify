@@ -9,14 +9,11 @@ export class MailService {
 
   constructor(private readonly configService: ConfigService) {
     this.transporter = nodemailer.createTransport({
-      host: this.configService.get<string>('SMTP_HOST', 'smtp.ethereal.email'),
+      host: this.configService.get<string>('SMTP_HOST'),
       port: this.configService.get<number>('SMTP_PORT', 587),
       auth: {
-        user: this.configService.get<string>(
-          'SMTP_USER',
-          'bd57v2lrw5enq756@ethereal.email',
-        ),
-        pass: this.configService.get<string>('SMTP_PASS', 'yVJvUWQ79b7GNv8X6Y'),
+        user: this.configService.get<string>('SMTP_USER'),
+        pass: this.configService.get<string>('SMTP_PASS'),
       },
     });
   }
@@ -34,13 +31,13 @@ export class MailService {
           <div style="padding: 30px; background-color: #f9fafb;">
             <p style="font-size: 16px; color: #333;">Xin chào bạn,</p>
             <p style="font-size: 16px; color: #333;">Bạn vừa yêu cầu mã xác thực cho tài khoản Chatiffy. Vui lòng sử dụng mã thiết lập mật khẩu một lần (OTP) dưới đây:</p>
-            
+
             <div style="text-align: center; margin: 30px 0;">
               <span style="display: inline-block; font-size: 28px; font-weight: bold; letter-spacing: 4px; padding: 10px 20px; background-color: #e5e7eb; border-radius: 8px; color: #111827;">
                 ${otp}
               </span>
             </div>
-            
+
             <p style="font-size: 14px; color: #666; margin-top: 20px;">Mã này chỉ có hiệu lực trong vòng 5 phút.</p>
             <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;" />
             <p style="font-size: 12px; color: #9ca3af; text-align: center;">Nếu bạn không yêu cầu mã này, xin bỏ qua email. Hệ thống sẽ tự hủy nó.</p>
@@ -80,13 +77,13 @@ export class MailService {
           <div style="padding: 30px; background-color: #f9fafb;">
             <p style="font-size: 16px; color: #333;">Xin chào bạn,</p>
             <p style="font-size: 16px; color: #333;">Ai đó (hy vọng là bạn) vừa yêu cầu đặt lại mật khẩu của bạn. Vui lòng sử dụng mã OTP dưới đây để xác nhận:</p>
-            
+
             <div style="text-align: center; margin: 30px 0;">
               <span style="display: inline-block; font-size: 28px; font-weight: bold; letter-spacing: 4px; padding: 10px 20px; background-color: #e5e7eb; border-radius: 8px; color: #111827;">
                 ${otp}
               </span>
             </div>
-            
+
             <p style="font-size: 14px; color: #666; margin-top: 20px;">Mã này chỉ có hiệu lực trong vòng 5 phút. Vui lòng không chia sẻ mã này cho bất kỳ ai.</p>
           </div>
         </div>

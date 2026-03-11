@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call */
 import { UnauthorizedException } from '@nestjs/common';
 import { LockoutService } from './lockout.service';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
@@ -92,9 +93,22 @@ describe('LockoutService', () => {
 
     it('should throw if IP is locked', async () => {
       mockRedisService.getCache.mockResolvedValue('1');
+      mockRedisClient.ttl.mockResolvedValue(600);
       await expect(service.checkIpLockout('192.168.1.1')).rejects.toThrow(
         UnauthorizedException,
       );
+    });
+
+    it('should include remaining minutes in IP lockout message', async () => {
+      mockRedisService.getCache.mockResolvedValue('1');
+      mockRedisClient.ttl.mockResolvedValue(120); // 2 phút
+
+      try {
+        await service.checkIpLockout('192.168.1.1');
+        fail('Should have thrown');
+      } catch (error: any) {
+        expect(error.message).toContain('2 phút');
+      }
     });
   });
 

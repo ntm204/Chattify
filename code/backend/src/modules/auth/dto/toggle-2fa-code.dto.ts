@@ -1,17 +1,6 @@
-import {
-  IsNotEmpty,
-  IsString,
-  MaxLength,
-  Length,
-  Matches,
-} from 'class-validator';
+import { IsNotEmpty, IsString, Length, Matches } from 'class-validator';
 
-export class Verify2FADto {
-  @IsNotEmpty({ message: 'Temp Token không được để trống' })
-  @IsString()
-  @MaxLength(500)
-  tempToken: string;
-
+export class Toggle2FACodeDto {
   @IsNotEmpty({ message: 'Mã 2FA không được để trống' })
   @IsString()
   @Length(6, 6, { message: 'Mã 2FA phải bao gồm đúng 6 chữ số' })

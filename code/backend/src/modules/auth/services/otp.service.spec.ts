@@ -1,6 +1,10 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access */
 import { BadRequestException } from '@nestjs/common';
+import { createHash } from 'crypto';
 import { OtpService } from './otp.service';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
+
+const hashOtp = (otp: string) => createHash('sha256').update(otp).digest('hex');
 
 // ==========================================
 // Mocks
@@ -156,7 +160,7 @@ describe('OtpService', () => {
   // ==========================================
   describe('verifyOtp', () => {
     it('should verify OTP successfully', async () => {
-      mockRedisService.getCache.mockResolvedValue('123456');
+      mockRedisService.getCache.mockResolvedValue(hashOtp('123456'));
 
       const result = await service.verifyOtp('test@test.com', '123456');
 
@@ -174,7 +178,7 @@ describe('OtpService', () => {
     });
 
     it('should throw with remaining attempts on wrong OTP', async () => {
-      mockRedisService.getCache.mockResolvedValue('123456');
+      mockRedisService.getCache.mockResolvedValue(hashOtp('123456'));
       mockRedisClient.incr.mockResolvedValue(1);
 
       try {
@@ -188,7 +192,7 @@ describe('OtpService', () => {
     });
 
     it('should destroy OTP after MAX_ATTEMPTS wrong tries', async () => {
-      mockRedisService.getCache.mockResolvedValue('123456');
+      mockRedisService.getCache.mockResolvedValue(hashOtp('123456'));
       mockRedisClient.incr.mockResolvedValue(AUTH_CONSTANTS.OTP_MAX_ATTEMPTS);
 
       await expect(
@@ -205,7 +209,7 @@ describe('OtpService', () => {
     });
 
     it('should set expire on attempts counter on first wrong try', async () => {
-      mockRedisService.getCache.mockResolvedValue('123456');
+      mockRedisService.getCache.mockResolvedValue(hashOtp('123456'));
       mockRedisClient.incr.mockResolvedValue(1);
 
       try {
@@ -221,7 +225,7 @@ describe('OtpService', () => {
     });
 
     it('should work with PASSWORD_RESET type', async () => {
-      mockRedisService.getCache.mockResolvedValue('654321');
+      mockRedisService.getCache.mockResolvedValue(hashOtp('654321'));
 
       const result = await service.verifyOtp(
         'test@test.com',

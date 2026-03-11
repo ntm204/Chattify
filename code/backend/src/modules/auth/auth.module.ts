@@ -29,7 +29,10 @@ import { AUTH_CONSTANTS } from '../../core/config/auth.constants';
         }
         return {
           secret: secret,
-          signOptions: { expiresIn: AUTH_CONSTANTS.ACCESS_TOKEN_EXPIRY },
+          signOptions: {
+            expiresIn: AUTH_CONSTANTS.ACCESS_TOKEN_EXPIRY,
+            algorithm: 'HS256' as const,
+          },
         };
       },
     }),

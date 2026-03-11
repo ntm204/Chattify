@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/require-await, @typescript-eslint/no-unused-vars */
 import { UnauthorizedException, NotFoundException } from '@nestjs/common';
 import { TokenService } from './token.service';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
@@ -199,7 +200,7 @@ describe('TokenService', () => {
       );
 
       expect(mockPrismaService.userSession.updateMany).toHaveBeenCalledWith({
-        where: { userId: 'user-uuid-1' },
+        where: { userId: 'user-uuid-1', isRevoked: false },
         data: { isRevoked: true },
       });
     });

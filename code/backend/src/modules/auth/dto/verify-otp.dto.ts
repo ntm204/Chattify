@@ -2,6 +2,7 @@ import {
   IsEmail,
   IsNotEmpty,
   Length,
+  Matches,
   IsOptional,
   IsString,
 } from 'class-validator';
@@ -14,6 +15,7 @@ export class VerifyOtpDto {
   email: string;
 
   @Length(6, 6, { message: 'Mã OTP phải bao gồm đúng 6 ký tự' })
+  @Matches(/^\d{6}$/, { message: 'Mã OTP chỉ được chứa chữ số' })
   @IsNotEmpty({ message: 'Không được để trống mã OTP' })
   otp: string;
 

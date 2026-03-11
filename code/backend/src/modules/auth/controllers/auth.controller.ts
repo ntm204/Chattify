@@ -15,18 +15,20 @@ import {
 } from '@nestjs/common';
 import * as express from 'express';
 import type { AuthenticatedRequest } from '../../../common/interfaces/authenticated-request.interface';
-import { ThrottlerGuard, Throttle } from '@nestjs/throttler';
-import { AuthGuard } from '@nestjs/passport';
+import { Throttle } from '@nestjs/throttler';
+import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { AuthService } from '../services/auth.service';
 import { PasswordService } from '../services/password.service';
 import { TwoFactorService } from '../services/two-factor.service';
 import { RegisterDto } from '../dto/register.dto';
 import { LoginDto } from '../dto/login.dto';
 import { VerifyOtpDto } from '../dto/verify-otp.dto';
+import { ResendOtpDto } from '../dto/resend-otp.dto';
 import { ForgotPasswordDto } from '../dto/forgot-password.dto';
 import { ResetPasswordDto } from '../dto/reset-password.dto';
 import { ChangePasswordDto } from '../dto/change-password.dto';
 import { Verify2FADto } from '../dto/verify-2fa.dto';
+import { Toggle2FACodeDto } from '../dto/toggle-2fa-code.dto';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
 
 @Controller('api/v1/auth')
@@ -39,7 +41,7 @@ export class AuthController {
 
   private readonly cookieOptions = {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: process.env.NODE_ENV !== 'development',
     sameSite: 'strict' as const,
     path: '/',
   };
@@ -79,8 +81,8 @@ export class AuthController {
   @Throttle({ default: { limit: 3, ttl: 60000 } }) // Rate limit: 3 requests / minute
   @HttpCode(HttpStatus.OK)
   @Post('resend-otp')
-  async resendOtp(@Body('email') email: string) {
-    return this.authService.resendOtp(email);
+  async resendOtp(@Body() dto: ResendOtpDto) {
+    return this.authService.resendOtp(dto.email);
   }
 
   @Throttle({ default: { limit: 5, ttl: 60000 } })
@@ -106,7 +108,7 @@ export class AuthController {
     return { message: 'Xác thực thành công', user: result.user };
   }
 
-  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
   @Post('login')
   async login(
@@ -161,7 +163,7 @@ export class AuthController {
     return { message: 'Làm mới Token thành công' };
   }
 
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   @Post('logout')
   async logout(
@@ -178,13 +180,13 @@ export class AuthController {
     return { message: 'Đăng xuất thành công' };
   }
 
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   @Get('sessions')
   async getSessions(@Req() req: AuthenticatedRequest) {
     return this.authService.getSessions(req.user.id);
   }
 
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   @Delete('sessions/:id')
   async revokeSession(
     @Req() req: AuthenticatedRequest,
@@ -195,7 +197,7 @@ export class AuthController {
 
   @Throttle({ default: { limit: 3, ttl: 60000 } })
   @Post('2fa/generate')
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   async generate2FA(@Req() req: AuthenticatedRequest) {
     return this.twoFactorService.generateTwoFactorAuthSecret(
       req.user.id,
@@ -205,22 +207,22 @@ export class AuthController {
 
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   @Post('2fa/turn-on')
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   async turnOn2FA(
     @Req() req: AuthenticatedRequest,
-    @Body('code') code: string,
+    @Body() dto: Toggle2FACodeDto,
   ) {
-    return this.twoFactorService.turnOnTwoFactorAuth(req.user.id, code);
+    return this.twoFactorService.turnOnTwoFactorAuth(req.user.id, dto.code);
   }
 
   @Throttle({ default: { limit: 3, ttl: 60000 } })
   @Post('2fa/turn-off')
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   async turnOff2FA(
     @Req() req: AuthenticatedRequest,
-    @Body('code') code: string,
+    @Body() dto: Toggle2FACodeDto,
   ) {
-    return this.twoFactorService.turnOffTwoFactorAuth(req.user.id, code);
+    return this.twoFactorService.turnOffTwoFactorAuth(req.user.id, dto.code);
   }
 
   @Throttle({ default: { limit: 5, ttl: 60000 } })
@@ -260,18 +262,35 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
   @Post('reset-password')
-  async resetPassword(@Body() resetPwDto: ResetPasswordDto) {
-    return this.passwordService.resetPassword(resetPwDto);
+  async resetPassword(
+    @Body() resetPwDto: ResetPasswordDto,
+    @Ip() ipAddress: string,
+    @Req() req: express.Request,
+  ) {
+    const deviceInfo = req.headers['user-agent'] || 'Unknown Device';
+    return this.passwordService.resetPassword(resetPwDto, {
+      ipAddress,
+      deviceInfo,
+    });
   }
 
   @Throttle({ default: { limit: 5, ttl: 60000 } })
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   @Post('change-password')
   async changePassword(
     @Req() req: AuthenticatedRequest,
     @Body() changePasswordDto: ChangePasswordDto,
+    @Ip() ipAddress: string,
+    @Res({ passthrough: true }) res: express.Response,
   ) {
-    return this.passwordService.changePassword(req.user.id, changePasswordDto);
+    const deviceInfo = req.headers['user-agent'] || 'Unknown Device';
+    const result = await this.passwordService.changePassword(
+      req.user.id,
+      changePasswordDto,
+      { ipAddress, deviceInfo },
+    );
+    this.clearAuthCookies(res);
+    return result;
   }
 }

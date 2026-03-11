@@ -58,11 +58,8 @@ export class AuthService {
       throw new BadRequestException('Tài khoản không tồn tại hoặc đã bị xoá.');
     }
 
-    // 3. Xác nhận User
-    const user = await this.prisma.user.update({
-      where: { email: data.email },
-      data: { isVerified: true },
-    });
+    // Mark email as verified via UsersService
+    const user = await this.usersService.markEmailVerified(data.email);
 
     // Create authenticated session
     const session = await this.tokenService.createSessionForUser(
@@ -92,7 +89,7 @@ export class AuthService {
     await this.lockoutService.checkIpLockout(data.ipAddress);
     await this.lockoutService.checkAccountLockout(data.email);
 
-    const user = await this.usersService.findByEmail(data.email);
+    const user = await this.usersService.findByEmailWithPassword(data.email);
 
     const dummyHash =
       '$2b$10$DUMMYHASHDUMMYHASHDUMMYHASHDUMMYHASHDUMMYHASHDUMMYHA';

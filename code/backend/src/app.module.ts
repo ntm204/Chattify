@@ -20,7 +20,7 @@ import { envValidationSchema } from './common/config/env.validation';
     ThrottlerModule.forRoot([
       {
         ttl: 60000,
-        limit: 1000,
+        limit: 200,
       },
     ]),
     RedisModule,

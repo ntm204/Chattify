@@ -31,17 +31,19 @@ async function bootstrap() {
   // Configuration
   const configService = app.get(ConfigService);
 
-  // Swagger API Documentation
-  const config = new DocumentBuilder()
-    .setTitle('Chatiffy API')
-    .setDescription(
-      'The Enterprise Chatiffy Backend API Documentation. All Auth concepts are highly secured.',
-    )
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  const documentFactory = () => SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, documentFactory);
+  // Swagger API Documentation (disabled in production)
+  if (configService.get<string>('NODE_ENV') !== 'production') {
+    const config = new DocumentBuilder()
+      .setTitle('Chatiffy API')
+      .setDescription(
+        'The Enterprise Chatiffy Backend API Documentation. All Auth concepts are highly secured.',
+      )
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    const documentFactory = () => SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, documentFactory);
+  }
 
   // CORS Configuration
   const corsOrigins = configService
@@ -56,8 +58,10 @@ async function bootstrap() {
   const port = configService.get<number>('PORT', 3000);
   await app.listen(port);
   console.log(`🚀 Application is running on: http://localhost:${port}`);
-  console.log(
-    `📚 Swagger Documentation available at: http://localhost:${port}/api/docs`,
-  );
+  if (configService.get<string>('NODE_ENV') !== 'production') {
+    console.log(
+      `📚 Swagger Documentation available at: http://localhost:${port}/api/docs`,
+    );
+  }
 }
 void bootstrap();

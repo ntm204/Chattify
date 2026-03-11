@@ -167,7 +167,7 @@ model UserSession {
 
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId])
+  @@index([userId, isRevoked])
   @@map("user_sessions")
 }
 

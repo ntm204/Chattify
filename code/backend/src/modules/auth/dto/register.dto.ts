@@ -26,6 +26,7 @@ export class RegisterDto {
 
   @IsString()
   @MinLength(8, { message: 'Mật khẩu phải dài ít nhất 8 ký tự' })
+  @MaxLength(100, { message: 'Mật khẩu không được vượt quá 100 ký tự' })
   @Matches(/((?=.*\d)|(?=.*\W+))(?![.\n])(?=.*[A-Z])(?=.*[a-z]).*$/, {
     message:
       'Mật khẩu quá yếu (Yêu cầu ít nhất 1 chữ hoa, 1 chữ thường, và 1 số hoặc ký tự đặc biệt)',

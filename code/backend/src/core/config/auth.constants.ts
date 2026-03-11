@@ -4,6 +4,9 @@
  */
 
 export const AUTH_CONSTANTS = {
+  // ===== Application =====
+  APP_NAME: 'Chatiffy',
+
   // ===== Account Lockout =====
   MAX_LOGIN_ATTEMPTS: 10,
   LOCKOUT_WARNING_THRESHOLD: 3,

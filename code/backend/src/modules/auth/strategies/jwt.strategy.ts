@@ -35,6 +35,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       ]),
       ignoreExpiration: false,
       secretOrKey: secret,
+      algorithms: ['HS256'],
     });
   }
 
@@ -72,7 +73,20 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         );
       }
 
-      user = session.user;
+      // Reject expired sessions even if not yet revoked
+      if (new Date() > session.expiresAt) {
+        throw new UnauthorizedException(
+          'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.',
+        );
+      }
+
+      user = {
+        id: session.user.id,
+        email: session.user.email,
+        username: session.user.username,
+        displayName: session.user.displayName,
+        avatarUrl: session.user.avatarUrl,
+      };
 
       // Update Redis cache missing
       const expirySecs = Math.floor(

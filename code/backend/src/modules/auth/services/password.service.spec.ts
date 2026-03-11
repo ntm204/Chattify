@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access */
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { PasswordService } from './password.service';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
@@ -94,11 +95,14 @@ describe('PasswordService', () => {
       mockOtpService.verifyOtp.mockResolvedValue(true);
       mockPrismaService.user.update.mockResolvedValue(mockUser);
 
-      const result = await service.resetPassword({
-        email: 'test@test.com',
-        otp: '123456',
-        newPassword: 'NewPass123!',
-      });
+      const result = await service.resetPassword(
+        {
+          email: 'test@test.com',
+          otp: '123456',
+          newPassword: 'NewPass123!',
+        },
+        { ipAddress: '127.0.0.1', deviceInfo: 'Jest Agent' },
+      );
 
       expect(result.message).toContain('Đổi mật khẩu thành công');
       expect(mockTokenService.revokeAllSessions).toHaveBeenCalledWith(
@@ -108,6 +112,8 @@ describe('PasswordService', () => {
         data: expect.objectContaining({
           action: 'PASSWORD_RESET',
           status: 'SUCCESS',
+          ipAddress: '127.0.0.1',
+          deviceInfo: 'Jest Agent',
         }),
       });
     });
@@ -116,11 +122,14 @@ describe('PasswordService', () => {
       mockOtpService.verifyOtp.mockResolvedValue(true);
       mockPrismaService.user.update.mockResolvedValue(mockUser);
 
-      await service.resetPassword({
-        email: 'test@test.com',
-        otp: '123456',
-        newPassword: 'NewPass123!',
-      });
+      await service.resetPassword(
+        {
+          email: 'test@test.com',
+          otp: '123456',
+          newPassword: 'NewPass123!',
+        },
+        { ipAddress: '127.0.0.1', deviceInfo: 'Jest Agent' },
+      );
 
       expect(mockOtpService.verifyOtp).toHaveBeenCalledWith(
         'test@test.com',
@@ -133,11 +142,14 @@ describe('PasswordService', () => {
       mockOtpService.verifyOtp.mockResolvedValue(true);
       mockPrismaService.user.update.mockResolvedValue(mockUser);
 
-      await service.resetPassword({
-        email: 'test@test.com',
-        otp: '123456',
-        newPassword: 'NewPass123!',
-      });
+      await service.resetPassword(
+        {
+          email: 'test@test.com',
+          otp: '123456',
+          newPassword: 'NewPass123!',
+        },
+        { ipAddress: '127.0.0.1', deviceInfo: 'Jest Agent' },
+      );
 
       const savedHash =
         mockPrismaService.user.update.mock.calls[0][0].data.passwordHash;
@@ -155,10 +167,14 @@ describe('PasswordService', () => {
     it('should change password successfully', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
 
-      const result = await service.changePassword('user-uuid-1', {
-        oldPassword: 'OldPass123!',
-        newPassword: 'NewPass456!',
-      });
+      const result = await service.changePassword(
+        'user-uuid-1',
+        {
+          oldPassword: 'OldPass123!',
+          newPassword: 'NewPass456!',
+        },
+        { ipAddress: '127.0.0.1', deviceInfo: 'Jest Agent' },
+      );
 
       expect(result.message).toContain('thay đổi mật khẩu thành công');
     });
@@ -166,10 +182,14 @@ describe('PasswordService', () => {
     it('should revoke all sessions after password change', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
 
-      await service.changePassword('user-uuid-1', {
-        oldPassword: 'OldPass123!',
-        newPassword: 'NewPass456!',
-      });
+      await service.changePassword(
+        'user-uuid-1',
+        {
+          oldPassword: 'OldPass123!',
+          newPassword: 'NewPass456!',
+        },
+        { ipAddress: '127.0.0.1', deviceInfo: 'Jest Agent' },
+      );
 
       expect(mockTokenService.revokeAllSessions).toHaveBeenCalledWith(
         'user-uuid-1',
@@ -209,18 +229,24 @@ describe('PasswordService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('should log PASSWORD_CHANGE action', async () => {
+    it('should log PASSWORD_CHANGE action with IP and device info', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
 
-      await service.changePassword('user-uuid-1', {
-        oldPassword: 'OldPass123!',
-        newPassword: 'NewPass456!',
-      });
+      await service.changePassword(
+        'user-uuid-1',
+        {
+          oldPassword: 'OldPass123!',
+          newPassword: 'NewPass456!',
+        },
+        { ipAddress: '127.0.0.1', deviceInfo: 'Jest Agent' },
+      );
 
       expect(mockPrismaService.authLog.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           action: 'PASSWORD_CHANGE',
           status: 'SUCCESS',
+          ipAddress: '127.0.0.1',
+          deviceInfo: 'Jest Agent',
         }),
       });
     });

@@ -34,8 +34,12 @@ export class TwoFactorService {
         'FATAL ERROR: TWO_FACTOR_ENCRYPTION_KEY environment variable is not defined!',
       );
     }
-    const salt =
-      this.configService.get<string>('TWO_FACTOR_SALT') || 'chatiffy-2fa-salt';
+    const salt = this.configService.get<string>('TWO_FACTOR_SALT');
+    if (!salt) {
+      throw new Error(
+        'FATAL ERROR: TWO_FACTOR_SALT environment variable is not defined!',
+      );
+    }
     this.encryptionKey = scryptSync(rawKey, salt, 32);
   }
 
@@ -77,7 +81,7 @@ export class TwoFactorService {
   }
 
   async generateTwoFactorAuthSecret(userId: string, email: string) {
-    const appName = 'Chatiffy Enterprise';
+    const appName = AUTH_CONSTANTS.APP_NAME;
     const secretData = speakeasy.generateSecret({
       name: `${appName} (${email})`,
     });
@@ -105,56 +109,15 @@ export class TwoFactorService {
     return this.verifyAndToggle2FA(userId, code, false);
   }
 
-  private async verifyAndToggle2FA(
+  /**
+   * Shared brute-force check for all 2FA verification paths.
+   * Increments attempts on failure, throws after MAX_ATTEMPTS.
+   */
+  private async check2FABruteForce(
     userId: string,
-    code: string,
-    enable: boolean,
-  ) {
-    const twoFactor = await this.prisma.twoFactorAuth.findUnique({
-      where: { userId },
-    });
-
-    if (!twoFactor) throw new BadRequestException('Chưa tạo mã QR 2FA!');
-    if (!enable && !twoFactor.isEnabled)
-      throw new BadRequestException('2FA đang không được bật!');
-
-    const decryptedSecret = this.decryptSecret(twoFactor.secret);
-    const isCodeValid = speakeasy.totp.verify({
-      secret: decryptedSecret,
-      encoding: 'base32',
-      token: code,
-    });
-
-    if (!isCodeValid)
-      throw new UnauthorizedException('Mã 2FA không chính xác!');
-
-    await this.prisma.twoFactorAuth.update({
-      where: { userId },
-      data: { isEnabled: enable },
-    });
-
-    return {
-      message: enable
-        ? 'Xác minh và Bật 2FA thành công!'
-        : 'Đã tắt 2FA thành công!',
-    };
-  }
-
-  async verifyCode(userId: string, code: string, isEnabling: boolean = false) {
+    isCodeValid: boolean,
+  ): Promise<void> {
     const attemptsKey = `2fa_attempts:${userId}`;
-
-    const twoFactor = await this.prisma.twoFactorAuth.findUnique({
-      where: { userId },
-    });
-
-    if (!twoFactor) return false;
-    if (!isEnabling && !twoFactor.isEnabled) return false;
-    const decryptedSecret = this.decryptSecret(twoFactor.secret);
-    const isCodeValid = speakeasy.totp.verify({
-      secret: decryptedSecret,
-      encoding: 'base32',
-      token: code,
-    });
 
     if (!isCodeValid) {
       const redisClient = this.redisService.getClient();
@@ -177,7 +140,59 @@ export class TwoFactorService {
         `Mã 2FA không chính xác! Bạn còn ${AUTH_CONSTANTS.TWO_FA_MAX_ATTEMPTS - attempts} lần thử.`,
       );
     }
+
     await this.redisService.deleteCache(attemptsKey);
+  }
+
+  private async verifyAndToggle2FA(
+    userId: string,
+    code: string,
+    enable: boolean,
+  ) {
+    const twoFactor = await this.prisma.twoFactorAuth.findUnique({
+      where: { userId },
+    });
+
+    if (!twoFactor) throw new BadRequestException('Chưa tạo mã QR 2FA!');
+    if (!enable && !twoFactor.isEnabled)
+      throw new BadRequestException('2FA đang không được bật!');
+
+    const decryptedSecret = this.decryptSecret(twoFactor.secret);
+    const isCodeValid = speakeasy.totp.verify({
+      secret: decryptedSecret,
+      encoding: 'base32',
+      token: code,
+    });
+
+    await this.check2FABruteForce(userId, isCodeValid);
+
+    await this.prisma.twoFactorAuth.update({
+      where: { userId },
+      data: { isEnabled: enable },
+    });
+
+    return {
+      message: enable
+        ? 'Xác minh và Bật 2FA thành công!'
+        : 'Đã tắt 2FA thành công!',
+    };
+  }
+
+  async verifyCode(userId: string, code: string, isEnabling: boolean = false) {
+    const twoFactor = await this.prisma.twoFactorAuth.findUnique({
+      where: { userId },
+    });
+
+    if (!twoFactor) return false;
+    if (!isEnabling && !twoFactor.isEnabled) return false;
+    const decryptedSecret = this.decryptSecret(twoFactor.secret);
+    const isCodeValid = speakeasy.totp.verify({
+      secret: decryptedSecret,
+      encoding: 'base32',
+      token: code,
+    });
+
+    await this.check2FABruteForce(userId, isCodeValid);
 
     return true;
   }

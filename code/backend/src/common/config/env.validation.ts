@@ -19,6 +19,7 @@ export const envValidationSchema = Joi.object({
 
   // 2FA Encryption
   TWO_FACTOR_ENCRYPTION_KEY: Joi.string().required(),
+  TWO_FACTOR_SALT: Joi.string().required(),
 
   // Mail
   SMTP_HOST: Joi.string().optional(),

@@ -46,7 +46,10 @@ export class PasswordService {
     return genericResponse;
   }
 
-  async resetPassword(data: ResetPasswordDto) {
+  async resetPassword(
+    data: ResetPasswordDto,
+    context?: { ipAddress?: string; deviceInfo?: string },
+  ) {
     await this.otpService.verifyOtp(data.email, data.otp, 'PASSWORD_RESET');
 
     const passwordHash = await bcrypt.hash(
@@ -64,6 +67,8 @@ export class PasswordService {
         userId: user.id,
         action: 'PASSWORD_RESET',
         status: 'SUCCESS',
+        ipAddress: context?.ipAddress,
+        deviceInfo: context?.deviceInfo,
       },
     });
 
@@ -77,7 +82,11 @@ export class PasswordService {
     };
   }
 
-  async changePassword(userId: string, data: ChangePasswordDto) {
+  async changePassword(
+    userId: string,
+    data: ChangePasswordDto,
+    context?: { ipAddress?: string; deviceInfo?: string },
+  ) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('Người dùng không tồn tại');
 
@@ -105,6 +114,8 @@ export class PasswordService {
         userId,
         action: 'PASSWORD_CHANGE',
         status: 'SUCCESS',
+        ipAddress: context?.ipAddress,
+        deviceInfo: context?.deviceInfo,
       },
     });
 

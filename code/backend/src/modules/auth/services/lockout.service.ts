@@ -33,9 +33,12 @@ export class LockoutService {
     const ipLockoutKey = `login_lockout_ip:${ipAddress}`;
     const isLocked = await this.redisService.getCache(ipLockoutKey);
     if (isLocked) {
+      const redisClient = this.redisService.getClient();
+      const ttl = await redisClient.ttl(ipLockoutKey);
+      const minutes = Math.ceil(ttl / 60);
       this.logger.warn(`Blocked login attempt from locked IP: ${ipAddress}`);
       throw new UnauthorizedException(
-        'Quá nhiều yêu cầu đăng nhập từ địa chỉ IP này. Vui lòng thử lại sau.',
+        `Quá nhiều yêu cầu đăng nhập từ địa chỉ IP này. Vui lòng thử lại sau ${minutes} phút.`,
       );
     }
   }

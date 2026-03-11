@@ -84,6 +84,27 @@ export class UsersService {
   async findByEmail(email: string) {
     return this.prisma.user.findUnique({
       where: { email },
+      select: {
+        ...this.USER_PUBLIC_SELECT,
+        isVerified: true,
+      },
+    });
+  }
+
+  async findByEmailWithPassword(email: string) {
+    return this.prisma.user.findUnique({
+      where: { email },
+    });
+  }
+
+  async markEmailVerified(email: string) {
+    return this.prisma.user.update({
+      where: { email },
+      data: { isVerified: true },
+      select: {
+        ...this.USER_PUBLIC_SELECT,
+        isVerified: true,
+      },
     });
   }
 

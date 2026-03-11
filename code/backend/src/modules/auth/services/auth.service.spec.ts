@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/require-await */
 import { UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
@@ -27,8 +28,10 @@ const mockSession = {
 // ==========================================
 const mockUsersService = {
   findByEmail: jest.fn(),
+  findByEmailWithPassword: jest.fn(),
   findById: jest.fn(),
   createUser: jest.fn(),
+  markEmailVerified: jest.fn(),
 };
 
 const mockPrismaService = {
@@ -153,7 +156,7 @@ describe('AuthService', () => {
     };
 
     it('should login successfully with correct credentials', async () => {
-      mockUsersService.findByEmail.mockResolvedValue(mockUser);
+      mockUsersService.findByEmailWithPassword.mockResolvedValue(mockUser);
       mockPrismaService.twoFactorAuth.findUnique.mockResolvedValue(null);
 
       const result = await service.login(loginDto);
@@ -165,10 +168,10 @@ describe('AuthService', () => {
     });
 
     it('should check IP lockout BEFORE account lockout (correct order)', async () => {
-      mockUsersService.findByEmail.mockResolvedValue(mockUser);
+      mockUsersService.findByEmailWithPassword.mockResolvedValue(mockUser);
       mockPrismaService.twoFactorAuth.findUnique.mockResolvedValue(null);
 
-      let callOrder: string[] = [];
+      const callOrder: string[] = [];
       mockLockoutService.checkIpLockout.mockImplementation(async () => {
         callOrder.push('IP');
       });
@@ -189,8 +192,8 @@ describe('AuthService', () => {
       await expect(service.login(loginDto)).rejects.toThrow(
         UnauthorizedException,
       );
-      // Should NOT even call findByEmail
-      expect(mockUsersService.findByEmail).not.toHaveBeenCalled();
+      // Should NOT even call findByEmailWithPassword
+      expect(mockUsersService.findByEmailWithPassword).not.toHaveBeenCalled();
     });
 
     it('should throw if account is locked', async () => {
@@ -204,7 +207,7 @@ describe('AuthService', () => {
     });
 
     it('should throw on wrong password', async () => {
-      mockUsersService.findByEmail.mockResolvedValue(mockUser);
+      mockUsersService.findByEmailWithPassword.mockResolvedValue(mockUser);
 
       await expect(
         service.login({ ...loginDto, password: 'WrongPass456!' }),
@@ -217,7 +220,7 @@ describe('AuthService', () => {
     });
 
     it('should throw on non-existent user (same error message as wrong password)', async () => {
-      mockUsersService.findByEmail.mockResolvedValue(null);
+      mockUsersService.findByEmailWithPassword.mockResolvedValue(null);
 
       await expect(service.login(loginDto)).rejects.toThrow(
         UnauthorizedException,
@@ -228,7 +231,7 @@ describe('AuthService', () => {
     });
 
     it('🛡️ TIMING ATTACK: should process non-existent user the same as wrong password', async () => {
-      mockUsersService.findByEmail.mockResolvedValue(null);
+      mockUsersService.findByEmailWithPassword.mockResolvedValue(null);
 
       // The key insight: if bcrypt.compare was NOT called with the dummyHash,
       // the code would throw much faster (timing attack detectable).
@@ -250,7 +253,7 @@ describe('AuthService', () => {
     });
 
     it('should show lockout WARNING when shouldWarn=true', async () => {
-      mockUsersService.findByEmail.mockResolvedValue(mockUser);
+      mockUsersService.findByEmailWithPassword.mockResolvedValue(mockUser);
       mockLockoutService.incrementLoginAttempts.mockResolvedValue({
         emailAttempts: 8,
         shouldWarn: true,
@@ -269,7 +272,9 @@ describe('AuthService', () => {
         ...mockUser,
         isVerified: false,
       };
-      mockUsersService.findByEmail.mockResolvedValue(unverifiedUser);
+      mockUsersService.findByEmailWithPassword.mockResolvedValue(
+        unverifiedUser,
+      );
 
       try {
         await service.login(loginDto);
@@ -282,7 +287,7 @@ describe('AuthService', () => {
     });
 
     it('should return 2FA temp token if 2FA is enabled', async () => {
-      mockUsersService.findByEmail.mockResolvedValue(mockUser);
+      mockUsersService.findByEmailWithPassword.mockResolvedValue(mockUser);
       mockPrismaService.twoFactorAuth.findUnique.mockResolvedValue({
         isEnabled: true,
       });
@@ -297,7 +302,7 @@ describe('AuthService', () => {
     });
 
     it('should log failed login attempt', async () => {
-      mockUsersService.findByEmail.mockResolvedValue(null);
+      mockUsersService.findByEmailWithPassword.mockResolvedValue(null);
 
       try {
         await service.login(loginDto);
@@ -314,7 +319,7 @@ describe('AuthService', () => {
     });
 
     it('should log successful login', async () => {
-      mockUsersService.findByEmail.mockResolvedValue(mockUser);
+      mockUsersService.findByEmailWithPassword.mockResolvedValue(mockUser);
       mockPrismaService.twoFactorAuth.findUnique.mockResolvedValue(null);
 
       await service.login(loginDto);
@@ -335,7 +340,7 @@ describe('AuthService', () => {
     it('should verify OTP, mark user as verified, and create session', async () => {
       mockOtpService.verifyOtp.mockResolvedValue(true);
       mockUsersService.findByEmail.mockResolvedValue(mockUser);
-      mockPrismaService.user.update.mockResolvedValue({
+      mockUsersService.markEmailVerified.mockResolvedValue({
         ...mockUser,
         isVerified: true,
       });
@@ -346,10 +351,9 @@ describe('AuthService', () => {
       });
 
       expect(result).toHaveProperty('access_token');
-      expect(mockPrismaService.user.update).toHaveBeenCalledWith({
-        where: { email: 'test@test.com' },
-        data: { isVerified: true },
-      });
+      expect(mockUsersService.markEmailVerified).toHaveBeenCalledWith(
+        'test@test.com',
+      );
     });
 
     it('should throw if user does not exist', async () => {

@@ -154,7 +154,7 @@ export class TokenService {
 
   async revokeAllSessions(userId: string) {
     await this.prisma.userSession.updateMany({
-      where: { userId },
+      where: { userId, isRevoked: false },
       data: { isRevoked: true },
     });
 
@@ -163,14 +163,12 @@ export class TokenService {
       `user_sessions:${userId}`,
     );
 
-    if (activeSessions.length > 0) {
-      const pipeline = redisClient.pipeline();
-      for (const sessionId of activeSessions) {
-        pipeline.del(`session:${sessionId}`);
-      }
-      pipeline.del(`user_sessions:${userId}`);
-      await pipeline.exec();
+    const pipeline = redisClient.pipeline();
+    for (const sessionId of activeSessions) {
+      pipeline.del(`session:${sessionId}`);
     }
+    pipeline.del(`user_sessions:${userId}`);
+    await pipeline.exec();
   }
 
   async refreshTokens(refreshToken: string) {

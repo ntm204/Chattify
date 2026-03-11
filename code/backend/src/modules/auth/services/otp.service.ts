@@ -1,6 +1,6 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { MailService } from '../../../core/mail/mail.service';
-import { randomInt } from 'crypto';
+import { randomInt, createHash } from 'crypto';
 import { RedisService } from '../../../core/redis/redis.service';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
 
@@ -37,9 +37,10 @@ export class OtpService {
     }
 
     const otp = randomInt(100000, 999999).toString();
+    const otpHash = createHash('sha256').update(otp).digest('hex');
     await this.redisService.setCache(
       redisKey,
-      otp,
+      otpHash,
       AUTH_CONSTANTS.OTP_TTL_SECONDS,
     );
     await this.redisService.setCache(
@@ -78,13 +79,14 @@ export class OtpService {
     const redisKey = `otp:${type}:${email}`;
     const attemptsKey = `otp_attempts:${type}:${email}`;
 
-    const storedOtp = await this.redisService.getCache(redisKey);
+    const storedHash = await this.redisService.getCache(redisKey);
 
-    if (!storedOtp) {
+    if (!storedHash) {
       throw new BadRequestException('Mã OTP không chính xác hoặc đã hết hạn!');
     }
 
-    if (storedOtp !== otp) {
+    const inputHash = createHash('sha256').update(otp).digest('hex');
+    if (storedHash !== inputHash) {
       const redisClient = this.redisService.getClient();
       const attempts = await redisClient.incr(attemptsKey);
       if (attempts === 1) {
