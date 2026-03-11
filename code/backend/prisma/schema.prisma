@@ -72,6 +72,11 @@ model User {
   memberships            ConversationMember[]
   attachments            MediaAttachment[]
 
+  // Auth Enterprise Relations
+  sessions               UserSession[]
+  authLogs               AuthLog[]
+  twoFactorAuth          TwoFactorAuth?
+
   @@map("users")
 }
 
@@ -145,3 +150,53 @@ model MediaAttachment {
 
   @@map("media_attachments")
 }
+
+// ==========================================
+// ENTERPRISE AUTHENTICATION MODELS
+// ==========================================
+
+model UserSession {
+  id           String    @id @default(uuid()) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  refreshToken String    @unique @map("refresh_token")
+  deviceInfo   String?   @map("device_info") // Tên thiết bị, OS, Browser
+  ipAddress    String?   @map("ip_address")
+  isRevoked    Boolean   @default(false) @map("is_revoked") // true nếu tk đăng xuất hoặc bị khoá từ xa
+  expiresAt    DateTime  @map("expires_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("user_sessions")
+}
+
+model AuthLog {
+  id           String    @id @default(uuid()) @db.Uuid
+  userId       String?   @map("user_id") @db.Uuid // Có thể null nếu test đăng nhập sai email
+  action       String    // LOGIN_SUCCESS, LOGIN_FAILED, PASSWORD_CHANGE, 2FA_ENABLE, LOGOUT
+  ipAddress    String?   @map("ip_address")
+  deviceInfo   String?   @map("device_info")
+  status       String    // SUCCESS / FAILED
+  failureReason String?  @map("failure_reason") // VD: Wrong password, IP Blocked
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  user         User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@map("auth_logs")
+}
+
+model TwoFactorAuth {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @unique @map("user_id") @db.Uuid
+  secret     String    // Mã bí mật dùng để liên kết với Google Authenticator
+  isEnabled  Boolean   @default(false) @map("is_enabled") // false nếu user vừa quét QR nhưng chưa bật
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("two_factor_auths")
+}
+

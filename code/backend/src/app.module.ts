@@ -3,10 +3,39 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
+import { PrismaModule } from './core/prisma/prisma.module';
+import { MailModule } from './core/mail/mail.module';
+import { RedisModule } from './core/redis/redis.module';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
+import { ConfigModule } from '@nestjs/config';
+import { envValidationSchema } from './common/config/env.validation';
 
 @Module({
-  imports: [AuthModule, UsersModule],
+  imports: [
+    ConfigModule.forRoot({
+      isGlobal: true, // Biến này sẽ truy cập được ở mọi module con
+      validationSchema: envValidationSchema, // Nếu thiếu config bắt buộc, App sẽ Crash ngay lúc khởi động
+    }),
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60000,
+        limit: 1000, // Tăng lên 1000 requests/phút (Mặc định cho toàn hệ thống)
+      },
+    ]),
+    RedisModule,
+    MailModule,
+    AuthModule,
+    UsersModule,
+    PrismaModule,
+  ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+  ],
 })
 export class AppModule {}

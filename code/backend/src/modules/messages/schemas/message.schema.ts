@@ -10,7 +10,10 @@ export enum MessageType {
   SYSTEM_LOG = 'SYSTEM_LOG',
 }
 
-@Schema({ timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' }, collection: 'messages' })
+@Schema({
+  timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' },
+  collection: 'messages',
+})
 export class Message extends Document {
   @Prop({ type: String, required: true, index: true })
   conversation_id: string; // Tham chiếu đến Conversation bằng UUID bên Postgres
@@ -24,7 +27,17 @@ export class Message extends Document {
   @Prop({ type: String })
   content: string;
 
-  @Prop({ type: [{ url: String, type: String, size: Number, width: Number, height: Number }] })
+  @Prop({
+    type: [
+      {
+        url: String,
+        type: String,
+        size: Number,
+        width: Number,
+        height: Number,
+      },
+    ],
+  })
   media: any[];
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Message' })
@@ -44,7 +57,7 @@ export class Message extends Document {
 
   @Prop({ type: Boolean, default: false })
   is_deleted: boolean;
-  
+
   @Prop({ type: [{ user_id: String, read_at: Date }] })
   read_by: any[];
 }
