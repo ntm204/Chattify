@@ -5,8 +5,10 @@ import {
   MaxLength,
   IsOptional,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export class LoginDto {
+  @Transform(({ value }: { value: string }) => value?.toLowerCase().trim())
   @IsEmail({}, { message: 'Định dạng email không hợp lệ' })
   @IsNotEmpty()
   @MaxLength(100)

@@ -38,19 +38,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(payload: {
-    sessionId: string;
-    sub: string;
-    email: string;
-    username: string;
-  }) {
+  async validate(payload: { sessionId: string; sub: string }) {
     if (!payload.sessionId) {
       throw new UnauthorizedException(
         'Token không hợp lệ: thiếu thông tin phiên đăng nhập.',
       );
     }
 
-    // [TỐI ƯU HIỆU NĂNG]: Đọc trực tiếp từ Redis thay vì chọc PostgreSQL liên tục
+    // Attempt to read from Redis cache
     const userStr = await this.redisService.getCache(
       `session:${payload.sessionId}`,
     );
@@ -65,7 +60,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (userStr) {
       user = JSON.parse(userStr) as typeof user;
     } else {
-      // Fallback check Postgres if Redis missed or flushed
+      // Fallback to PostgreSQL if Redis cache misses
       const session = await this.prisma.userSession.findUnique({
         where: { id: payload.sessionId },
         include: { user: true },
@@ -94,7 +89,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       }
     }
 
-    // Trả về thẳng User lấy được từ Session kèm sessionId để Controller Logout gọi Revoke
     return { ...user, currentSessionId: payload.sessionId };
   }
 }

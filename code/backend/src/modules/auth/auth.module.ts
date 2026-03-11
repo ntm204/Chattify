@@ -9,6 +9,9 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { TokenService } from './services/token.service';
 import { OtpService } from './services/otp.service';
 import { TwoFactorService } from './services/two-factor.service';
+import { LockoutService } from './services/lockout.service';
+import { PasswordService } from './services/password.service';
+import { AUTH_CONSTANTS } from '../../core/config/auth.constants';
 
 @Module({
   imports: [
@@ -26,7 +29,7 @@ import { TwoFactorService } from './services/two-factor.service';
         }
         return {
           secret: secret,
-          signOptions: { expiresIn: '15m' }, // Token hết hạn sau 15 phút
+          signOptions: { expiresIn: AUTH_CONSTANTS.ACCESS_TOKEN_EXPIRY },
         };
       },
     }),
@@ -38,6 +41,8 @@ import { TwoFactorService } from './services/two-factor.service';
     TokenService,
     OtpService,
     TwoFactorService,
+    LockoutService,
+    PasswordService,
   ],
   exports: [AuthService, JwtStrategy, PassportModule],
 })

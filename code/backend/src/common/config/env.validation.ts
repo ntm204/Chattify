@@ -15,6 +15,10 @@ export const envValidationSchema = Joi.object({
 
   // JWT Security
   JWT_SECRET: Joi.string().required(),
+  JWT_2FA_SECRET: Joi.string().required(),
+
+  // 2FA Encryption
+  TWO_FACTOR_ENCRYPTION_KEY: Joi.string().required(),
 
   // Mail
   SMTP_HOST: Joi.string().optional(),

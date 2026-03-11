@@ -5,8 +5,10 @@ import {
   IsOptional,
   IsString,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export class VerifyOtpDto {
+  @Transform(({ value }: { value: string }) => value?.toLowerCase().trim())
   @IsEmail({}, { message: 'Định dạng email không hợp lệ' })
   @IsNotEmpty()
   email: string;

@@ -8,9 +8,6 @@ export class MailService {
   private readonly logger = new Logger(MailService.name);
 
   constructor(private readonly configService: ConfigService) {
-    // Để setup thực tế, bạn sẽ cần thay thế bằng thông số SMTP của dự án (AWS SES, SendGrid, Gmail)
-    // Tại đây tôi dùng Ethereal (máy chủ test mail giả lập) cho mục đích Dev
-    // Nếu có biến môi trường SMTP, sẽ dùng biến môi trường.
     this.transporter = nodemailer.createTransport({
       host: this.configService.get<string>('SMTP_HOST', 'smtp.ethereal.email'),
       port: this.configService.get<number>('SMTP_PORT', 587),
@@ -57,9 +54,8 @@ export class MailService {
       const info = await this.transporter.sendMail(mailOptions);
       this.logger.log(`Email đã gửi thành công tới ${to}`);
       if (this.configService.get<string>('NODE_ENV') !== 'production') {
-        // Trong Ethereal test, ta có thể xem ngay link email
         this.logger.debug(
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+          /* eslint-disable-next-line @typescript-eslint/no-unsafe-argument */
           `[TEST] Preview URL: ${nodemailer.getTestMessageUrl(info)}`,
         );
       }
@@ -103,7 +99,7 @@ export class MailService {
       this.logger.log(`Email quên mật khẩu đã gửi thành công tới ${to}`);
       if (this.configService.get<string>('NODE_ENV') !== 'production') {
         this.logger.debug(
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+          /* eslint-disable-next-line @typescript-eslint/no-unsafe-argument */
           `[TEST] Preview URL: ${nodemailer.getTestMessageUrl(info)}`,
         );
       }

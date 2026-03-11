@@ -1,21 +1,50 @@
 import { Prisma, User, UserSession } from '@prisma/client';
 import {
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../../core/prisma/prisma.service';
 import { RedisService } from '../../../core/redis/redis.service';
-import { randomBytes } from 'crypto';
+import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
+import { randomBytes, createHash } from 'crypto';
 
 @Injectable()
 export class TokenService {
+  private readonly logger = new Logger(TokenService.name);
+  private readonly jwt2FASecret: string;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly redisService: RedisService,
-  ) {}
+    private readonly configService: ConfigService,
+  ) {
+    const secret2FA = this.configService.get<string>('JWT_2FA_SECRET');
+    if (!secret2FA) {
+      throw new Error(
+        'FATAL ERROR: JWT_2FA_SECRET environment variable is not defined!',
+      );
+    }
+    this.jwt2FASecret = secret2FA;
+  }
+
+  private hashToken(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
+  }
+
+  private toSafeUserData(user: Partial<User>) {
+    return {
+      id: user.id,
+      email: user.email,
+      username: user.username,
+      displayName: user.displayName,
+      avatarUrl: user.avatarUrl,
+    };
+  }
 
   async createSessionForUser(
     userId: string,
@@ -25,13 +54,16 @@ export class TokenService {
     // Use Prisma transaction but execute Redis commands afterwards to ensure we don't mix tx state
     const sessionVariables = await this.prisma.$transaction(
       async (tx: Prisma.TransactionClient) => {
-        const pseudoRefreshToken = randomBytes(32).toString('hex');
-        const sessionExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+        const rawRefreshToken = randomBytes(32).toString('hex');
+        const hashedRefreshToken = this.hashToken(rawRefreshToken);
+        const sessionExpiresAt = new Date(
+          Date.now() + AUTH_CONSTANTS.SESSION_EXPIRY_MS,
+        );
 
         const session = await tx.userSession.create({
           data: {
             userId,
-            refreshToken: pseudoRefreshToken,
+            refreshToken: hashedRefreshToken,
             deviceInfo,
             ipAddress,
             expiresAt: sessionExpiresAt,
@@ -46,9 +78,9 @@ export class TokenService {
         });
 
         let sessionsToRevokeIds: string[] = [];
-        if (activeSessions.length > 5) {
+        if (activeSessions.length > AUTH_CONSTANTS.MAX_SESSIONS_PER_USER) {
           sessionsToRevokeIds = activeSessions
-            .slice(5)
+            .slice(AUTH_CONSTANTS.MAX_SESSIONS_PER_USER)
             .map((s: UserSession) => s.id);
           await tx.userSession.updateMany({
             where: { id: { in: sessionsToRevokeIds } },
@@ -56,18 +88,18 @@ export class TokenService {
           });
         }
 
-        return { session, user, sessionsToRevokeIds };
+        return { session, rawRefreshToken, user, sessionsToRevokeIds };
       },
     );
 
     // Update Redis Cache outside transaction
-    const { session, user, sessionsToRevokeIds } = sessionVariables;
+    const { session, rawRefreshToken, user, sessionsToRevokeIds } =
+      sessionVariables;
 
-    // Cache new session for 7 days
     await this.redisService.setCache(
       `session:${session.id}`,
-      JSON.stringify(user),
-      7 * 24 * 60 * 60,
+      JSON.stringify(this.toSafeUserData(user!)),
+      AUTH_CONSTANTS.SESSION_EXPIRY_SECONDS,
     );
 
     // Add to user_sessions set
@@ -82,7 +114,7 @@ export class TokenService {
       }
     }
 
-    return session;
+    return { ...session, refreshToken: rawRefreshToken };
   }
 
   async getSessions(userId: string) {
@@ -142,8 +174,23 @@ export class TokenService {
   }
 
   async refreshTokens(refreshToken: string) {
+    const hashedToken = this.hashToken(refreshToken);
+
+    const reuseFlag = await this.redisService.getCache(
+      `rotated_refresh:${hashedToken}`,
+    );
+    if (reuseFlag) {
+      this.logger.warn(
+        `🚨 Refresh token reuse detected! Revoking all sessions for userId: ${reuseFlag}`,
+      );
+      await this.revokeAllSessions(reuseFlag);
+      throw new UnauthorizedException(
+        'Phát hiện hoạt động đáng ngờ. Tất cả phiên đã bị đăng xuất vì lý do bảo mật.',
+      );
+    }
+
     const session = await this.prisma.userSession.findFirst({
-      where: { refreshToken, isRevoked: false },
+      where: { refreshToken: hashedToken, isRevoked: false },
       include: { user: true },
     });
 
@@ -166,20 +213,26 @@ export class TokenService {
       );
     }
 
-    const newRefreshToken = randomBytes(32).toString('hex');
+    const newRawRefreshToken = randomBytes(32).toString('hex');
+    const newHashedRefreshToken = this.hashToken(newRawRefreshToken);
     await this.prisma.userSession.update({
       where: { id: session.id },
-      data: { refreshToken: newRefreshToken },
+      data: { refreshToken: newHashedRefreshToken },
     });
 
-    // Update TTL on Redis
     await this.redisService.setCache(
-      `session:${session.id}`,
-      JSON.stringify(session.user),
-      7 * 24 * 60 * 60,
+      `rotated_refresh:${hashedToken}`,
+      session.userId,
+      AUTH_CONSTANTS.SESSION_EXPIRY_SECONDS,
     );
 
-    return this.generateTokens(session.user, session.id, newRefreshToken);
+    await this.redisService.setCache(
+      `session:${session.id}`,
+      JSON.stringify(this.toSafeUserData(session.user)),
+      AUTH_CONSTANTS.SESSION_EXPIRY_SECONDS,
+    );
+
+    return this.generateTokens(session.user, session.id, newRawRefreshToken);
   }
 
   generateTokens(
@@ -187,15 +240,8 @@ export class TokenService {
     sessionId: string,
     refreshToken?: string,
   ) {
-    const payload: {
-      sub: string;
-      email: string;
-      username: string;
-      sessionId?: string;
-    } = {
+    const payload: { sub: string; sessionId?: string } = {
       sub: user.id!,
-      email: user.email!,
-      username: user.username!,
     };
 
     if (sessionId) {
@@ -204,13 +250,7 @@ export class TokenService {
 
     const result: Record<string, unknown> = {
       access_token: this.jwtService.sign(payload),
-      user: {
-        id: user.id,
-        email: user.email,
-        username: user.username,
-        displayName: user.displayName,
-        avatarUrl: user.avatarUrl,
-      },
+      user: this.toSafeUserData(user),
     };
 
     if (refreshToken) {
@@ -223,13 +263,18 @@ export class TokenService {
   generateTemp2FAToken(userId: string) {
     return this.jwtService.sign(
       { sub: userId, type: '2FA_TEMP' },
-      { expiresIn: '5m' },
+      {
+        expiresIn: AUTH_CONSTANTS.TWO_FA_TEMP_TOKEN_EXPIRY,
+        secret: this.jwt2FASecret,
+      },
     );
   }
 
   verifyTemp2FAToken(token: string): string | null {
     try {
-      const payload: unknown = this.jwtService.verify(token);
+      const payload: unknown = this.jwtService.verify(token, {
+        secret: this.jwt2FASecret,
+      });
       if (
         typeof payload === 'object' &&
         payload !== null &&

@@ -6,6 +6,7 @@ import {
   Matches,
   MaxLength,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 
 export class RegisterDto {
   @IsString()
@@ -17,8 +18,10 @@ export class RegisterDto {
   @MaxLength(20, { message: 'Username không vượt quá 20 ký tự' })
   username: string;
 
+  @Transform(({ value }: { value: string }) => value?.toLowerCase().trim())
   @IsEmail({}, { message: 'Định dạng email không hợp lệ' })
   @IsNotEmpty()
+  @MaxLength(100, { message: 'Email không được vượt quá 100 ký tự' })
   email: string;
 
   @IsString()
@@ -31,5 +34,6 @@ export class RegisterDto {
 
   @IsString()
   @IsNotEmpty()
+  @MaxLength(50, { message: 'Tên hiển thị không được vượt quá 50 ký tự' })
   displayName: string;
 }

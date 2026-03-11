@@ -28,11 +28,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
         unknown
       >;
 
-      // Nếu lỗi từ class-validator (Bad Request), exceptionResponse.message sẽ là mảng các chi tiết lỗi
+      // Extract validation error messages
       if (typeof exceptionResponse === 'object' && exceptionResponse !== null) {
         message = (exceptionResponse.error as string) || exception.message;
 
-        // Trích xuất chi tiết nếu có
+        // Set details if present
         if (Array.isArray(exceptionResponse.message)) {
           details = exceptionResponse.message;
           message = 'Dữ liệu đầu vào không hợp lệ';
@@ -43,7 +43,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
         message = exception.message;
       }
     } else {
-      // Lỗi ngoài ý muốn (Database crash, TypeError...)
+      // Unhandled exceptions (e.g., Database crash, TypeError)
       this.logger.error(
         `[UNHANDLED EXCEPTION] ${request.method} ${request.url}`,
         exception instanceof Error
@@ -52,7 +52,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       );
     }
 
-    // Cấu trúc Response chuẩn hoá của hệ thống
+    // Standardized response body
     const errorResponseBody: {
       success: boolean;
       statusCode: number;

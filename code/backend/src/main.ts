@@ -10,29 +10,28 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // Kích hoạt bộ HTTP Headers Security chống XSS, Clickjacking...
+  // Security Headers
   app.use(helmet());
 
-  // Kích hoạt đọc Cookie Security
+  // Cookie Support
   app.use(cookieParser());
 
-  // Kích hoạt tính năng Validate tự động cho tất cả input
+  // Global Validation
   app.useGlobalPipes(
     new ValidationPipe({
-      whitelist: true, // Tự động loại bỏ các field không khai báo trong DTO
-      forbidNonWhitelisted: true, // Báo lỗi nếu frontend gửi data thừa
-      transform: true, // Tự động ép kiểu dữ liệu
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
     }),
   );
 
-  // Bắt toàn bộ ngoại lệ và chuẩn hoá Format trả về cho Client
+  // Global Exception Filter
   app.useGlobalFilters(new AllExceptionsFilter());
 
-  // Bật CORS cho phép Frontend gọi API (lấy từ env, mặc định localhost dev)
-  // Khởi tạo ConfigService để đọc biến môi trường hợp lệ
+  // Configuration
   const configService = app.get(ConfigService);
 
-  // Setup Swagger API Documentation
+  // Swagger API Documentation
   const config = new DocumentBuilder()
     .setTitle('Chatiffy API')
     .setDescription(
@@ -44,7 +43,7 @@ async function bootstrap() {
   const documentFactory = () => SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, documentFactory);
 
-  // Bật CORS cho phép Frontend gọi API (lấy từ env, mặc định localhost dev)
+  // CORS Configuration
   const corsOrigins = configService
     .get<string>('CORS_ORIGIN', 'http://localhost:3000,http://localhost:3001')
     .split(',')

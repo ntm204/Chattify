@@ -14,13 +14,13 @@ import { envValidationSchema } from './common/config/env.validation';
 @Module({
   imports: [
     ConfigModule.forRoot({
-      isGlobal: true, // Biến này sẽ truy cập được ở mọi module con
-      validationSchema: envValidationSchema, // Nếu thiếu config bắt buộc, App sẽ Crash ngay lúc khởi động
+      isGlobal: true,
+      validationSchema: envValidationSchema,
     }),
     ThrottlerModule.forRoot([
       {
         ttl: 60000,
-        limit: 1000, // Tăng lên 1000 requests/phút (Mặc định cho toàn hệ thống)
+        limit: 1000,
       },
     ]),
     RedisModule,

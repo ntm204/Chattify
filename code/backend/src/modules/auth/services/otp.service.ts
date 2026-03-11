@@ -1,10 +1,13 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { MailService } from '../../../core/mail/mail.service';
 import { randomInt } from 'crypto';
 import { RedisService } from '../../../core/redis/redis.service';
+import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
 
 @Injectable()
 export class OtpService {
+  private readonly logger = new Logger(OtpService.name);
+
   constructor(
     private readonly mailService: MailService,
     private readonly redisService: RedisService,
@@ -14,11 +17,19 @@ export class OtpService {
     const redisKey = `otp:${type}:${email}`;
     const cooldownKey = `otp_cooldown:${type}:${email}`;
     const attemptsKey = `otp_attempts:${type}:${email}`;
-
-    // 1. Kiểm tra Cooldown 60s
+    const dailyLimitKey = `otp_daily:${type}:${email}`;
+    const redisClient = this.redisService.getClient();
+    const dailyCount = await redisClient.incr(dailyLimitKey);
+    if (dailyCount === 1) {
+      await redisClient.expire(dailyLimitKey, 86400);
+    }
+    if (dailyCount > AUTH_CONSTANTS.OTP_DAILY_LIMIT) {
+      throw new BadRequestException(
+        `Bạn đã vượt quá giới hạn gửi OTP trong ngày (tối đa ${AUTH_CONSTANTS.OTP_DAILY_LIMIT} lần). Vui lòng thử lại vào ngày mai.`,
+      );
+    }
     const isOnCooldown = await this.redisService.getCache(cooldownKey);
     if (isOnCooldown) {
-      const redisClient = this.redisService.getClient();
       const ttl = await redisClient.ttl(cooldownKey);
       throw new BadRequestException(
         `Vui lòng đợi ${ttl} giây trước khi yêu cầu gửi lại OTP.`,
@@ -26,28 +37,31 @@ export class OtpService {
     }
 
     const otp = randomInt(100000, 999999).toString();
-
-    // 2. Lưu OTP vào Redis với TTL 5 phút (300 giây)
-    await this.redisService.setCache(redisKey, otp, 300);
-
-    // 3. Đặt Cooldown 60 giây
-    await this.redisService.setCache(cooldownKey, '1', 60);
-
-    // Xoá bộ đếm số lần nhập sai cũ nếu có
+    await this.redisService.setCache(
+      redisKey,
+      otp,
+      AUTH_CONSTANTS.OTP_TTL_SECONDS,
+    );
+    await this.redisService.setCache(
+      cooldownKey,
+      '1',
+      AUTH_CONSTANTS.OTP_COOLDOWN_SECONDS,
+    );
     await this.redisService.deleteCache(attemptsKey);
 
     try {
-      // await để đảm bảo catch được lỗi, tránh trường hợp SMTP sập người dùng bị khoá 60s vô cớ
       if (type === 'PASSWORD_RESET') {
         await this.mailService.sendPasswordResetOtpEmail(email, otp);
       } else {
         await this.mailService.sendOtpEmail(email, otp);
       }
     } catch (error) {
-      // Revert state nếu mail lỗi
       await this.redisService.deleteCache(redisKey);
       await this.redisService.deleteCache(cooldownKey);
-      console.error('Mail Send Error:', error);
+      this.logger.error(
+        `Mail send failed for ${email}`,
+        error instanceof Error ? error.stack : String(error),
+      );
       throw new BadRequestException(
         'Lỗi hệ thống Email. Vui lòng thử lại sau vài phút.',
       );
@@ -73,27 +87,22 @@ export class OtpService {
     if (storedOtp !== otp) {
       const redisClient = this.redisService.getClient();
       const attempts = await redisClient.incr(attemptsKey);
-
-      // Nếu lần đầu sai, set expire cho key đếm này cùng thời gian tồn tại của OTP
       if (attempts === 1) {
-        await redisClient.expire(attemptsKey, 300);
+        await redisClient.expire(attemptsKey, AUTH_CONSTANTS.OTP_TTL_SECONDS);
       }
 
-      if (attempts >= 5) {
-        // Xóa OTP khỏi Redis và xóa luôn bộ đếm để ép user phải xin gửi lại
+      if (attempts >= AUTH_CONSTANTS.OTP_MAX_ATTEMPTS) {
         await this.redisService.deleteCache(redisKey);
         await this.redisService.deleteCache(attemptsKey);
         throw new BadRequestException(
-          'Bạn đã nhập sai quá 5 lần. Mã OTP đã bị huỷ vì lý do bảo mật, vui lòng yêu cầu mã mới!',
+          `Bạn đã nhập sai quá ${AUTH_CONSTANTS.OTP_MAX_ATTEMPTS} lần. Mã OTP đã bị huỷ vì lý do bảo mật, vui lòng yêu cầu mã mới!`,
         );
       }
 
       throw new BadRequestException(
-        `Mã OTP không chính xác! Bạn còn ${5 - attempts} lần thử.`,
+        `Mã OTP không chính xác! Bạn còn ${AUTH_CONSTANTS.OTP_MAX_ATTEMPTS - attempts} lần thử.`,
       );
     }
-
-    // Xoá OTP sau khi verify thành công
     await this.redisService.deleteCache(redisKey);
     await this.redisService.deleteCache(attemptsKey);
 
