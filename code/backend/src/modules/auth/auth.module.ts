@@ -11,6 +11,7 @@ import { OtpService } from './services/otp.service';
 import { TwoFactorService } from './services/two-factor.service';
 import { LockoutService } from './services/lockout.service';
 import { PasswordService } from './services/password.service';
+import { SessionCleanupCron } from './cron/session-cleanup.cron';
 import { AUTH_CONSTANTS } from '../../core/config/auth.constants';
 
 @Module({
@@ -46,6 +47,7 @@ import { AUTH_CONSTANTS } from '../../core/config/auth.constants';
     TwoFactorService,
     LockoutService,
     PasswordService,
+    SessionCleanupCron,
   ],
   exports: [AuthService, JwtStrategy, PassportModule],
 })

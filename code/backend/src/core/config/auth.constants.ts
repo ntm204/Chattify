@@ -17,7 +17,7 @@ export const AUTH_CONSTANTS = {
   IP_LOCKOUT_DURATION_SECONDS: 900, // 15 minutes
 
   // ===== Password =====
-  SALT_ROUNDS: 10,
+  SALT_ROUNDS: 12,
 
   // ===== Session & Token =====
   ACCESS_TOKEN_EXPIRY: '15m',

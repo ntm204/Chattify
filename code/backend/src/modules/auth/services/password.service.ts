@@ -12,6 +12,7 @@ import { ForgotPasswordDto } from '../dto/forgot-password.dto';
 import { ResetPasswordDto } from '../dto/reset-password.dto';
 import { ChangePasswordDto } from '../dto/change-password.dto';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
+import { AUTH_MESSAGES } from '../../../core/config/auth.messages';
 import * as bcrypt from 'bcrypt';
 
 /**
@@ -31,7 +32,7 @@ export class PasswordService {
 
   async forgotPassword(data: ForgotPasswordDto) {
     const genericResponse = {
-      message: 'Nếu email hợp lệ, hệ thống sẽ gửi mã OTP đến cho bạn.',
+      message: AUTH_MESSAGES.FORGOT_PASSWORD_GENERIC,
     };
 
     const user = await this.usersService.findByEmail(data.email);
@@ -77,8 +78,7 @@ export class PasswordService {
     this.logger.log(`Password reset successful for userId: ${user.id}`);
 
     return {
-      message:
-        'Đổi mật khẩu thành công! Vui lòng sử dụng mật khẩu mới để đăng nhập.',
+      message: AUTH_MESSAGES.CHANGE_PASSWORD_SUCCESS,
     };
   }
 
@@ -88,11 +88,11 @@ export class PasswordService {
     context?: { ipAddress?: string; deviceInfo?: string },
   ) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user) throw new NotFoundException('Người dùng không tồn tại');
+    if (!user) throw new NotFoundException(AUTH_MESSAGES.USER_NOT_FOUND);
 
     const isMatch = await bcrypt.compare(data.oldPassword, user.passwordHash);
     if (!isMatch) {
-      throw new BadRequestException('Mật khẩu cũ không chính xác');
+      throw new BadRequestException(AUTH_MESSAGES.OLD_PASSWORD_INCORRECT);
     }
 
     if (data.oldPassword === data.newPassword) {
@@ -124,7 +124,7 @@ export class PasswordService {
     this.logger.log(`Password changed successfully for userId: ${userId}`);
 
     return {
-      message: 'Đã thay đổi mật khẩu thành công. Vui lòng đăng nhập lại!',
+      message: AUTH_MESSAGES.CHANGE_PASSWORD_SUCCESS,
     };
   }
 }

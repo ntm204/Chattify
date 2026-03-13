@@ -1,11 +1,6 @@
-import {
-  IsEmail,
-  IsNotEmpty,
-  IsString,
-  MaxLength,
-  IsOptional,
-} from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString, MaxLength } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { ApiProperty } from '@nestjs/swagger';
 
 export class LoginDto {
   @Transform(({ value }: { value: string }) => value?.toLowerCase().trim())
@@ -14,18 +9,16 @@ export class LoginDto {
   @MaxLength(100)
   email: string;
 
+  @ApiProperty({
+    example: 'password123',
+    description: 'Mật khẩu người dùng',
+  })
   @IsString()
   @IsNotEmpty({ message: 'Mật khẩu không được để trống' })
-  @MaxLength(100)
   password: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(255)
-  deviceInfo?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(50)
-  ipAddress?: string;
 }
+
+export type LoginPayload = LoginDto & {
+  ipAddress?: string;
+  deviceInfo?: string;
+};

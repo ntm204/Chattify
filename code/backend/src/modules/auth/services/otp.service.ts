@@ -3,6 +3,7 @@ import { MailService } from '../../../core/mail/mail.service';
 import { randomInt, createHash } from 'crypto';
 import { RedisService } from '../../../core/redis/redis.service';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
+import { AUTH_MESSAGES } from '../../../core/config/auth.messages';
 
 @Injectable()
 export class OtpService {
@@ -17,6 +18,16 @@ export class OtpService {
     const redisKey = `otp:${type}:${email}`;
     const cooldownKey = `otp_cooldown:${type}:${email}`;
     const attemptsKey = `otp_attempts:${type}:${email}`;
+
+    // 1. Check cooldown FIRST to prevent racing the daily limits
+    const isOnCooldown = await this.redisService.getCache(cooldownKey);
+    if (isOnCooldown) {
+      const redisClient = this.redisService.getClient();
+      const ttl = await redisClient.ttl(cooldownKey);
+      throw new BadRequestException(AUTH_MESSAGES.OTP_COOLDOWN(ttl));
+    }
+
+    // 2. Increment daily limit AFTER verifying not on cooldown
     const dailyLimitKey = `otp_daily:${type}:${email}`;
     const redisClient = this.redisService.getClient();
     const dailyCount = await redisClient.incr(dailyLimitKey);
@@ -25,14 +36,7 @@ export class OtpService {
     }
     if (dailyCount > AUTH_CONSTANTS.OTP_DAILY_LIMIT) {
       throw new BadRequestException(
-        `Bạn đã vượt quá giới hạn gửi OTP trong ngày (tối đa ${AUTH_CONSTANTS.OTP_DAILY_LIMIT} lần). Vui lòng thử lại vào ngày mai.`,
-      );
-    }
-    const isOnCooldown = await this.redisService.getCache(cooldownKey);
-    if (isOnCooldown) {
-      const ttl = await redisClient.ttl(cooldownKey);
-      throw new BadRequestException(
-        `Vui lòng đợi ${ttl} giây trước khi yêu cầu gửi lại OTP.`,
+        AUTH_MESSAGES.OTP_DAILY_LIMIT(AUTH_CONSTANTS.OTP_DAILY_LIMIT),
       );
     }
 
@@ -68,7 +72,7 @@ export class OtpService {
       );
     }
 
-    return { message: 'Mã OTP đã được gửi đến email của bạn.' };
+    return { message: AUTH_MESSAGES.OTP_SENT_GENERIC };
   }
 
   async verifyOtp(
@@ -82,7 +86,7 @@ export class OtpService {
     const storedHash = await this.redisService.getCache(redisKey);
 
     if (!storedHash) {
-      throw new BadRequestException('Mã OTP không chính xác hoặc đã hết hạn!');
+      throw new BadRequestException(AUTH_MESSAGES.OTP_INVALID_OR_EXPIRED);
     }
 
     const inputHash = createHash('sha256').update(otp).digest('hex');
@@ -96,9 +100,7 @@ export class OtpService {
       if (attempts >= AUTH_CONSTANTS.OTP_MAX_ATTEMPTS) {
         await this.redisService.deleteCache(redisKey);
         await this.redisService.deleteCache(attemptsKey);
-        throw new BadRequestException(
-          `Bạn đã nhập sai quá ${AUTH_CONSTANTS.OTP_MAX_ATTEMPTS} lần. Mã OTP đã bị huỷ vì lý do bảo mật, vui lòng yêu cầu mã mới!`,
-        );
+        throw new BadRequestException(AUTH_MESSAGES.OTP_MAX_ATTEMPTS);
       }
 
       throw new BadRequestException(

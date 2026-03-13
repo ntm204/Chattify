@@ -30,6 +30,7 @@ import { ChangePasswordDto } from '../dto/change-password.dto';
 import { Verify2FADto } from '../dto/verify-2fa.dto';
 import { Toggle2FACodeDto } from '../dto/toggle-2fa-code.dto';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
+import { AUTH_MESSAGES } from '../../../core/config/auth.messages';
 
 @Controller('api/v1/auth')
 export class AuthController {
@@ -105,7 +106,7 @@ export class AuthController {
       result.access_token as string,
       result.refresh_token as string,
     );
-    return { message: 'Xác thực thành công', user: result.user };
+    return { message: AUTH_MESSAGES.VERIFY_EMAIL_SUCCESS, user: result.user };
   }
 
   @Throttle({ default: { limit: 10, ttl: 60000 } })
@@ -138,7 +139,7 @@ export class AuthController {
       result.access_token as string,
       result.refresh_token as string,
     );
-    return { message: 'Đăng nhập thành công', user: result.user };
+    return { message: AUTH_MESSAGES.LOGIN_SUCCESS, user: result.user };
   }
 
   @Throttle({ default: { limit: 10, ttl: 60000 } })
@@ -150,9 +151,7 @@ export class AuthController {
   ) {
     const refreshToken = req.cookies['refresh_token'] as string | undefined;
     if (!refreshToken) {
-      throw new UnauthorizedException(
-        'Không tìm thấy Refresh Token trong Cookie',
-      );
+      throw new UnauthorizedException(AUTH_MESSAGES.REFRESH_TOKEN_NOT_FOUND);
     }
     const result = await this.authService.refreshTokens(refreshToken);
     this.setAuthCookies(
@@ -160,7 +159,7 @@ export class AuthController {
       result.access_token as string,
       result.refresh_token as string,
     );
-    return { message: 'Làm mới Token thành công' };
+    return { message: AUTH_MESSAGES.REFRESH_TOKEN_SUCCESS };
   }
 
   @UseGuards(JwtAuthGuard)
@@ -177,7 +176,7 @@ export class AuthController {
       );
     }
     this.clearAuthCookies(res);
-    return { message: 'Đăng xuất thành công' };
+    return { message: AUTH_MESSAGES.LOGOUT_SUCCESS };
   }
 
   @UseGuards(JwtAuthGuard)
@@ -245,7 +244,7 @@ export class AuthController {
       result.access_token as string,
       result.refresh_token as string,
     );
-    return { message: 'Đăng nhập thành công', user: result.user };
+    return { message: AUTH_MESSAGES.LOGIN_SUCCESS, user: result.user };
   }
 
   // ==========================================

@@ -1,11 +1,4 @@
-import {
-  IsEmail,
-  IsNotEmpty,
-  Length,
-  Matches,
-  IsOptional,
-  IsString,
-} from 'class-validator';
+import { IsEmail, IsNotEmpty, Length, Matches } from 'class-validator';
 import { Transform } from 'class-transformer';
 
 export class VerifyOtpDto {
@@ -18,12 +11,9 @@ export class VerifyOtpDto {
   @Matches(/^\d{6}$/, { message: 'Mã OTP chỉ được chứa chữ số' })
   @IsNotEmpty({ message: 'Không được để trống mã OTP' })
   otp: string;
-
-  @IsString()
-  @IsOptional()
-  deviceInfo?: string;
-
-  @IsString()
-  @IsOptional()
-  ipAddress?: string;
 }
+
+export type VerifyOtpPayload = VerifyOtpDto & {
+  ipAddress?: string;
+  deviceInfo?: string;
+};

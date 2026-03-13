@@ -7,13 +7,14 @@ import {
 import { UsersService } from '../../users/users.service';
 import { PrismaService } from '../../../core/prisma/prisma.service';
 import { RegisterDto } from '../dto/register.dto';
-import { LoginDto } from '../dto/login.dto';
-import { VerifyOtpDto } from '../dto/verify-otp.dto';
+import { LoginPayload } from '../dto/login.dto';
+import { VerifyOtpPayload } from '../dto/verify-otp.dto';
 import { TokenService } from './token.service';
 import { OtpService } from './otp.service';
 import { TwoFactorService } from './two-factor.service';
 import { LockoutService } from './lockout.service';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
+import { AUTH_MESSAGES } from '../../../core/config/auth.messages';
 import * as bcrypt from 'bcrypt';
 
 /**
@@ -44,22 +45,21 @@ export class AuthService {
     await this.otpService.generateAndSendOtp(user.email);
 
     return {
-      message:
-        'Đăng ký thành công! Vui lòng kiểm tra Email để nhận mã OTP 6 số.',
+      message: AUTH_MESSAGES.REGISTER_SUCCESS,
     };
   }
 
-  async verifyEmailOtp(data: VerifyOtpDto) {
+  async verifyEmailOtp(data: VerifyOtpPayload) {
     await this.otpService.verifyOtp(data.email, data.otp);
 
     // Ensure user exists before updating
-    const existingUser = await this.usersService.findByEmail(data.email);
-    if (!existingUser) {
-      throw new BadRequestException('Tài khoản không tồn tại hoặc đã bị xoá.');
+    const user = await this.usersService.findByEmail(data.email);
+    if (!user) {
+      throw new BadRequestException(AUTH_MESSAGES.ACCOUNT_NOT_FOUND_OR_DELETED);
     }
 
     // Mark email as verified via UsersService
-    const user = await this.usersService.markEmailVerified(data.email);
+    await this.usersService.markEmailVerified(data.email);
 
     // Create authenticated session
     const session = await this.tokenService.createSessionForUser(
@@ -85,7 +85,7 @@ export class AuthService {
     );
   }
 
-  async login(data: LoginDto) {
+  async login(data: LoginPayload) {
     await this.lockoutService.checkIpLockout(data.ipAddress);
     await this.lockoutService.checkAccountLockout(data.email);
 
@@ -117,11 +117,11 @@ export class AuthService {
 
       if (shouldWarn) {
         throw new UnauthorizedException(
-          'Email hoặc mật khẩu không chính xác. Cảnh báo: Bạn sắp bị khóa tài khoản tạm thời nếu tiếp tục nhập sai!',
+          AUTH_MESSAGES.INVALID_CREDENTIALS_WARNING,
         );
       }
 
-      throw new UnauthorizedException('Email hoặc mật khẩu không chính xác');
+      throw new UnauthorizedException(AUTH_MESSAGES.INVALID_CREDENTIALS);
     }
 
     // Reset login attempts upon successful authentication
@@ -129,7 +129,7 @@ export class AuthService {
 
     if (!user.isVerified) {
       throw new UnauthorizedException({
-        message: 'Vui lòng xác thực Email trước khi đăng nhập!',
+        message: AUTH_MESSAGES.VERIFY_EMAIL_REQUIRED,
         action: 'VERIFY_EMAIL_REQUIRED',
         email: data.email,
       });
@@ -143,7 +143,7 @@ export class AuthService {
       const tempToken = this.tokenService.generateTemp2FAToken(user.id);
       return {
         requires2FA: true,
-        message: 'Vui lòng nhập mã Google Authenticator',
+        message: AUTH_MESSAGES.TFA_REQUIRED,
         tempToken,
       };
     }
@@ -178,21 +178,17 @@ export class AuthService {
   ) {
     const userId = this.tokenService.verifyTemp2FAToken(tempToken);
     if (!userId) {
-      throw new UnauthorizedException(
-        'Phiên đăng nhập thời gian thực (2FA) không hợp lệ hoặc đã hết hạn.',
-      );
+      throw new UnauthorizedException(AUTH_MESSAGES.TFA_TEMP_TOKEN_INVALID);
     }
 
     const isValid = await this.twoFactorService.verifyCode(userId, code);
     if (!isValid) {
-      throw new UnauthorizedException(
-        'Chưa kích hoạt 2FA hoặc người dùng không có 2FA.',
-      );
+      throw new UnauthorizedException(AUTH_MESSAGES.TFA_NOT_ENABLED);
     }
 
     const user = await this.usersService.findById(userId);
     if (!user) {
-      throw new UnauthorizedException('Người dùng không tồn tại');
+      throw new UnauthorizedException(AUTH_MESSAGES.USER_NOT_FOUND);
     }
 
     const session = await this.tokenService.createSessionForUser(
@@ -219,11 +215,10 @@ export class AuthService {
   }
 
   async resendOtp(email: string) {
-    if (!email) throw new BadRequestException('Vui lòng cung cấp email');
+    if (!email) throw new BadRequestException(AUTH_MESSAGES.EMAIL_REQUIRED);
 
     const genericResponse = {
-      message:
-        'Nếu email hợp lệ và chưa xác thực, mã OTP sẽ được gửi đến email của bạn.',
+      message: AUTH_MESSAGES.OTP_SENT_GENERIC,
     };
 
     const user = await this.usersService.findByEmail(email);

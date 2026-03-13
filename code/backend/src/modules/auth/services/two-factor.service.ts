@@ -9,6 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../core/prisma/prisma.service';
 import { RedisService } from '../../../core/redis/redis.service';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
+import { AUTH_MESSAGES } from '../../../core/config/auth.messages';
 import {
   createCipheriv,
   createDecipheriv,
@@ -132,12 +133,16 @@ export class TwoFactorService {
 
       if (attempts >= AUTH_CONSTANTS.TWO_FA_MAX_ATTEMPTS) {
         throw new BadRequestException(
-          `Bạn đã nhập sai mã 2FA quá ${AUTH_CONSTANTS.TWO_FA_MAX_ATTEMPTS} lần. Vui lòng thử lại sau 5 phút!`,
+          AUTH_MESSAGES.TFA_CODE_INCORRECT_WAIT(
+            AUTH_CONSTANTS.TWO_FA_MAX_ATTEMPTS,
+          ),
         );
       }
 
       throw new UnauthorizedException(
-        `Mã 2FA không chính xác! Bạn còn ${AUTH_CONSTANTS.TWO_FA_MAX_ATTEMPTS - attempts} lần thử.`,
+        AUTH_MESSAGES.TFA_CODE_INCORRECT(
+          AUTH_CONSTANTS.TWO_FA_MAX_ATTEMPTS - attempts,
+        ),
       );
     }
 

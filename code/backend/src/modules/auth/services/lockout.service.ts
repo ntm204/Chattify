@@ -1,6 +1,7 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { RedisService } from '../../../core/redis/redis.service';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
+import { AUTH_MESSAGES } from '../../../core/config/auth.messages';
 
 /**
  * LockoutService
@@ -20,7 +21,7 @@ export class LockoutService {
       const ttl = await redisClient.ttl(lockoutKey);
       const minutes = Math.ceil(ttl / 60);
       throw new UnauthorizedException({
-        message: `Tài khoản tạm thời bị khóa. Vui lòng thử lại sau ${minutes} phút.`,
+        message: AUTH_MESSAGES.ACCOUNT_LOCKED(`${minutes} phút`),
         action: 'ACCOUNT_LOCKED',
         suggestion:
           'Nếu bạn quên mật khẩu, hãy sử dụng chức năng "Quên mật khẩu" để đặt lại.',
@@ -38,7 +39,7 @@ export class LockoutService {
       const minutes = Math.ceil(ttl / 60);
       this.logger.warn(`Blocked login attempt from locked IP: ${ipAddress}`);
       throw new UnauthorizedException(
-        `Quá nhiều yêu cầu đăng nhập từ địa chỉ IP này. Vui lòng thử lại sau ${minutes} phút.`,
+        AUTH_MESSAGES.IP_LOCKED(`${minutes} phút`),
       );
     }
   }

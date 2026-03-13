@@ -60,7 +60,7 @@ async function bootstrap() {
   console.log(`🚀 Application is running on: http://localhost:${port}`);
   if (configService.get<string>('NODE_ENV') !== 'production') {
     console.log(
-      `📚 Swagger Documentation available at: http://localhost:${port}/api/docs`,
+      `→ Swagger Documentation available at: http://localhost:${port}/api/docs`,
     );
   }
 }

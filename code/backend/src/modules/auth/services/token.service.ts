@@ -153,18 +153,33 @@ export class TokenService {
   }
 
   async revokeAllSessions(userId: string) {
+    // 1. Revoke in PostgreSQL
     await this.prisma.userSession.updateMany({
       where: { userId, isRevoked: false },
       data: { isRevoked: true },
     });
 
+    // 2. Query all known session IDs from PostgreSQL as fallback against Redis Set eviction
+    const dbSessions = await this.prisma.userSession.findMany({
+      where: { userId },
+      select: { id: true },
+    });
+
+    // 3. Cleanup Redis using combined data
     const redisClient = this.redisService.getClient();
-    const activeSessions = await redisClient.smembers(
+    const activeRedisSessions = await redisClient.smembers(
       `user_sessions:${userId}`,
     );
 
+    const allSessionIdsToClear = new Set([
+      ...(activeRedisSessions || []),
+      ...(dbSessions || []).map((s) => s.id),
+    ]);
+
+    if (allSessionIdsToClear.size === 0) return;
+
     const pipeline = redisClient.pipeline();
-    for (const sessionId of activeSessions) {
+    for (const sessionId of allSessionIdsToClear) {
       pipeline.del(`session:${sessionId}`);
     }
     pipeline.del(`user_sessions:${userId}`);

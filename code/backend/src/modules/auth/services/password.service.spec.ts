@@ -2,6 +2,7 @@
 import { NotFoundException, BadRequestException } from '@nestjs/common';
 import { PasswordService } from './password.service';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
+import { AUTH_MESSAGES } from '../../../core/config/auth.messages';
 import * as bcrypt from 'bcrypt';
 
 // ==========================================
@@ -68,7 +69,7 @@ describe('PasswordService', () => {
 
       const result = await service.forgotPassword({ email: 'test@test.com' });
 
-      expect(result.message).toContain('Nếu email hợp lệ');
+      expect(result.message).toEqual(AUTH_MESSAGES.FORGOT_PASSWORD_GENERIC);
       expect(mockOtpService.generateAndSendOtp).toHaveBeenCalledWith(
         'test@test.com',
         'PASSWORD_RESET',
@@ -82,7 +83,7 @@ describe('PasswordService', () => {
         email: 'nonexistent@test.com',
       });
 
-      expect(result.message).toContain('Nếu email hợp lệ');
+      expect(result.message).toEqual(AUTH_MESSAGES.FORGOT_PASSWORD_GENERIC);
       expect(mockOtpService.generateAndSendOtp).not.toHaveBeenCalled();
     });
   });
@@ -104,7 +105,7 @@ describe('PasswordService', () => {
         { ipAddress: '127.0.0.1', deviceInfo: 'Jest Agent' },
       );
 
-      expect(result.message).toContain('Đổi mật khẩu thành công');
+      expect(result.message).toEqual(AUTH_MESSAGES.CHANGE_PASSWORD_SUCCESS);
       expect(mockTokenService.revokeAllSessions).toHaveBeenCalledWith(
         mockUser.id,
       );
@@ -176,7 +177,7 @@ describe('PasswordService', () => {
         { ipAddress: '127.0.0.1', deviceInfo: 'Jest Agent' },
       );
 
-      expect(result.message).toContain('thay đổi mật khẩu thành công');
+      expect(result.message).toEqual(AUTH_MESSAGES.CHANGE_PASSWORD_SUCCESS);
     });
 
     it('should revoke all sessions after password change', async () => {
