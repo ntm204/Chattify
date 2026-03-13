@@ -1,21 +1,21 @@
-import * as React from "react"
-import { cn } from "@/lib/utils"
+import * as React from "react";
+import { cn } from "@/lib/utils";
 
-export interface InputProps
-  extends React.InputHTMLAttributes<HTMLInputElement> {
-    error?: string;
+export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+  error?: string;
+  containerClassName?: string;
 }
 
 const Input = React.forwardRef<HTMLInputElement, InputProps>(
-  ({ className, type, error, ...props }, ref) => {
+  ({ className, type, error, containerClassName, ...props }, ref) => {
     return (
-      <div className="w-full flex flex-col mb-[10px]">
+      <div className={cn("w-full flex flex-col mb-2.5", containerClassName)}>
         <input
           type={type}
           className={cn(
-            "w-full px-[18px] py-[15px] bg-[var(--input-bg)] border-[1.5px] border-[var(--input-border)] rounded-[var(--radius)] font-inherit text-[14.5px] text-[var(--foreground)] outline-none transition-all placeholder:text-[var(--text-muted)] focus:border-[var(--input-focus)] focus:shadow-[0_0_0_3px_rgba(0,0,0,0.07)]",
+            "w-full px-4.5 py-3.75 bg-(--input-bg) border-[1.5px] border-(--input-border) rounded-(--radius) font-inherit text-[14.5px] leading-normal text-(--foreground) outline-none transition-all placeholder:text-(--text-muted) focus:border-(--input-focus) focus:shadow-[0_0_0_3px_rgba(0,0,0,0.07)]",
             error && "border-red-500/50",
-            className
+            className,
           )}
           ref={ref}
           {...props}
@@ -26,9 +26,9 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
           </p>
         )}
       </div>
-    )
-  }
-)
-Input.displayName = "Input"
+    );
+  },
+);
+Input.displayName = "Input";
 
-export { Input }
+export { Input };

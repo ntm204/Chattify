@@ -1,13 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-
-export interface User {
-  id: string;
-  email: string;
-  username: string;
-  displayName: string;
-  avatarUrl: string | null;
-}
+import { User } from '../interfaces/auth.interface';
 
 interface AuthState {
   user: User | null;
@@ -25,9 +18,8 @@ export const useAuthStore = create<AuthState>()(
       logout: () => set({ user: null, isAuthenticated: false }),
     }),
     {
-      name: 'chatiffy-auth-storage', // Key added to localStorage
+      name: 'chatiffy-auth-storage',
       storage: createJSONStorage(() => localStorage),
-      // We only store `user` data, NOT tokens. Tokens remain in HttpOnly cookies!
       partialize: (state) => ({ user: state.user, isAuthenticated: state.isAuthenticated }),
     }
   )
