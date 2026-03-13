@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SnowUI – Sign In</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+      :root {
+        --bg: #ebebeb;
+        --input-bg: #e2e2e2;
+        --input-border: #e2e2e2;
+        --input-focus: #b0b0b0;
+        --text-primary: #111;
+        --text-secondary: #555;
+        --text-muted: #aaa;
+        --btn-bg: #111;
+        --btn-text: #fff;
+        --link-color: #8d89a9;
+        --radius: 14px;
+      }
+
+      body {
+        font-family: "Inter", sans-serif;
+        background: var(--bg);
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+
+      .page { display: none; width: 100%; max-width: 380px; flex-direction: column; align-items: center; }
+      .page.active { display: flex; animation: fadeUp 0.25s ease both; }
+      @keyframes fadeUp {
+        from { opacity: 0; transform: translateY(12px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+
+      .card { width: 100%; }
+
+      h1 {
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--text-primary);
+        text-align: center;
+        margin-bottom: 22px;
+        letter-spacing: -0.3px;
+      }
+
+      .field { margin-bottom: 10px; }
+      .field input {
+        width: 100%;
+        padding: 15px 18px;
+        background: var(--input-bg);
+        border: 1.5px solid var(--input-border);
+        border-radius: var(--radius);
+        font-size: 14.5px;
+        font-family: inherit;
+        color: var(--text-primary);
+        outline: none;
+        transition: border-color 0.2s, box-shadow 0.2s;
+      }
+      .field input::placeholder { color: var(--text-muted); }
+      .field input:focus {
+        border-color: var(--input-focus);
+        box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.07);
+      }
+
+      .btn {
+        width: 100%;
+        padding: 15px;
+        background: var(--btn-bg);
+        color: var(--btn-text);
+        border: none;
+        border-radius: var(--radius);
+        font-size: 15px;
+        font-weight: 400;
+        font-family: inherit;
+        cursor: pointer;
+        margin-top: 12px;
+        transition: opacity 0.15s, transform 0.1s;
+      }
+      .btn:hover { opacity: 0.85; }
+      .btn:active { transform: scale(0.99); }
+
+      .links-row {
+        display: flex;
+        justify-content: center;
+        gap: 14px;
+        margin-top: 16px;
+      }
+      .links-row a {
+        font-size: 13px;
+        color: var(--link-color);
+        text-decoration: none;
+        font-weight: 500;
+        transition: opacity 0.15s;
+      }
+      .links-row a:hover { opacity: 0.75; }
+
+      /* divider dot between links */
+      .links-row span {
+        font-size: 13px;
+        color: var(--text-muted);
+        pointer-events: none;
+      }
+
+      .hint {
+        font-size: 13.5px;
+        color: var(--text-secondary);
+        text-align: center;
+        margin-bottom: 18px;
+        line-height: 1.6;
+      }
+
+      .success-box {
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        padding: 8px 0 4px;
+      }
+      .success-box .icon {
+        width: 54px; height: 54px;
+        background: #111;
+        border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        margin-bottom: 16px;
+      }
+      .success-box h2 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+      .success-box p { font-size: 13.5px; color: var(--text-secondary); line-height: 1.6; }
+
+      .strength-bar-wrap { margin-top: 7px; display: flex; gap: 4px; }
+      .strength-seg { flex: 1; height: 3px; border-radius: 99px; background: #d8d8d8; transition: background 0.25s; }
+      .strength-seg.weak { background: #e55; }
+      .strength-seg.mid  { background: #f90; }
+      .strength-seg.good { background: #3c3; }
+
+      .check-row { display: flex; align-items: flex-start; gap: 9px; margin-top: 8px; }
+      .check-row input[type="checkbox"] { width: 15px; height: 15px; margin-top: 1px; accent-color: #111; cursor: pointer; flex-shrink: 0; }
+      .check-row label { font-size: 13px; color: var(--text-secondary); cursor: pointer; line-height: 1.5; user-select: none; }
+      .check-row a { color: var(--link-color); text-decoration: none; font-weight: 500; }
+      .check-row a:hover { opacity: 0.75; }
+
+      .alert {
+        display: none;
+        padding: 10px 14px;
+        border-radius: 10px;
+        font-size: 13px;
+        margin-bottom: 12px;
+        font-weight: 500;
+      }
+      .alert.error { background: #fee2e2; color: #b91c1c; }
+    </style>
+  </head>
+  <body>
+
+    <!-- LOGIN -->
+    <div class="page active" id="page-login">
+      <div class="card">
+        <h1>Sign In</h1>
+        <div class="alert error" id="login-error"></div>
+        <div class="field">
+          <input type="text" id="login-email" placeholder="Email or Phone number" autocomplete="username" />
+        </div>
+        <div class="field">
+          <input type="password" id="login-password" placeholder="Password" autocomplete="current-password" />
+        </div>
+        <button class="btn" onclick="handleLogin()">Sign In</button>
+        <div class="links-row">
+          <a href="#" onclick="navigate('signup'); return false;">Sign Up</a>
+          <span>·</span>
+          <a href="#" onclick="navigate('forgot'); return false;">Forgot Password</a>
+          <span>·</span>
+          <a href="#">Contact Us</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- SIGN UP -->
+    <div class="page" id="page-signup">
+      <div class="card">
+        <h1>Create Account</h1>
+        <div class="alert error" id="signup-error"></div>
+        <div class="field">
+          <input type="text" id="signup-name" placeholder="Full name" autocomplete="name" />
+        </div>
+        <div class="field">
+          <input type="text" id="signup-email" placeholder="Email or Phone number" autocomplete="username" />
+        </div>
+        <div class="field">
+          <input type="password" id="signup-pass" placeholder="Password" autocomplete="new-password" oninput="updateStrength(this.value)" />
+          <div class="strength-bar-wrap">
+            <div class="strength-seg" id="seg1"></div>
+            <div class="strength-seg" id="seg2"></div>
+            <div class="strength-seg" id="seg3"></div>
+            <div class="strength-seg" id="seg4"></div>
+          </div>
+        </div>
+        <div class="field">
+          <input type="password" id="signup-confirm" placeholder="Confirm password" autocomplete="new-password" />
+        </div>
+        <div class="check-row">
+          <input type="checkbox" id="agree-terms" />
+          <label for="agree-terms">I agree to the <a href="#">Terms of Use</a> and <a href="#">Privacy Policy</a></label>
+        </div>
+        <button class="btn" onclick="handleSignup()">Sign Up</button>
+        <div class="links-row">
+          <a href="#" onclick="navigate('login'); return false;">Already have an account? Sign In</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- FORGOT PASSWORD -->
+    <div class="page" id="page-forgot">
+      <div class="card">
+        <h1>Forgot Password</h1>
+        <div id="forgot-form-wrap">
+          <p class="hint">Enter your email or phone number and we'll send you a link to reset your password.</p>
+          <div class="alert error" id="forgot-error">Please enter your email or phone number.</div>
+          <div class="field">
+            <input type="text" id="forgot-email" placeholder="Email or Phone number" autocomplete="username" />
+          </div>
+          <button class="btn" onclick="handleForgot()">Send Reset Link</button>
+        </div>
+        <div class="success-box" id="forgot-success">
+          <div class="icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          </div>
+          <h2>Check your inbox</h2>
+          <p>We've sent a password reset link to your email. Check your spam folder if you don't see it.</p>
+          <button class="btn" style="margin-top: 20px" onclick="navigate('login')">Back to Sign In</button>
+        </div>
+        <div class="links-row" id="forgot-bottom-links">
+          <a href="#" onclick="navigate('login'); return false;">Sign In</a>
+          <span>·</span>
+          <a href="#" onclick="navigate('signup'); return false;">Create Account</a>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      function navigate(page) {
+        document.querySelectorAll(".page").forEach((p) => p.classList.remove("active"));
+        document.getElementById("page-" + page).classList.add("active");
+        if (page === "forgot") {
+          document.getElementById("forgot-form-wrap").style.display = "";
+          document.getElementById("forgot-success").style.display = "none";
+          document.getElementById("forgot-bottom-links").style.display = "";
+          document.getElementById("forgot-error").style.display = "none";
+        }
+      }
+
+      function handleLogin() {
+        const email = document.getElementById("login-email").value.trim();
+        const pass  = document.getElementById("login-password").value;
+        const err   = document.getElementById("login-error");
+        if (!email || !pass) { err.style.display = "block"; err.textContent = "Please fill in all fields."; return; }
+        err.style.display = "none";
+        alert("Signed in as " + email + "! (demo)");
+      }
+
+      function updateStrength(val) {
+        const segs = [1, 2, 3, 4].map((i) => document.getElementById("seg" + i));
+        let score = 0;
+        if (val.length >= 6) score++;
+        if (val.length >= 10) score++;
+        if (/[A-Z]/.test(val) && /[0-9]/.test(val)) score++;
+        if (/[^A-Za-z0-9]/.test(val)) score++;
+        const cls = score <= 1 ? "weak" : score <= 2 ? "mid" : "good";
+        segs.forEach((s, i) => { s.className = "strength-seg" + (i < score ? " " + cls : ""); });
+      }
+
+      function handleSignup() {
+        const name    = document.getElementById("signup-name").value.trim();
+        const email   = document.getElementById("signup-email").value.trim();
+        const pass    = document.getElementById("signup-pass").value;
+        const confirm = document.getElementById("signup-confirm").value;
+        const agreed  = document.getElementById("agree-terms").checked;
+        const err     = document.getElementById("signup-error");
+        if (!name || !email || !pass || !confirm) { err.style.display = "block"; err.textContent = "Please fill in all fields."; return; }
+        if (pass !== confirm) { err.style.display = "block"; err.textContent = "Passwords do not match."; return; }
+        if (!agreed) { err.style.display = "block"; err.textContent = "Please accept the terms to continue."; return; }
+        err.style.display = "none";
+        alert("Account created for " + email + "! (demo)");
+        navigate("login");
+      }
+
+      function handleForgot() {
+        const val = document.getElementById("forgot-email").value.trim();
+        const err = document.getElementById("forgot-error");
+        if (!val) { err.style.display = "block"; return; }
+        err.style.display = "none";
+        document.getElementById("forgot-form-wrap").style.display = "none";
+        document.getElementById("forgot-bottom-links").style.display = "none";
+        document.getElementById("forgot-success").style.display = "flex";
+      }
+    </script>
+  </body>
+</html>

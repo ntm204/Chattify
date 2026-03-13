@@ -161,6 +161,7 @@ model UserSession {
   refreshToken String    @unique @map("refresh_token")
   deviceInfo   String?   @map("device_info") // Tên thiết bị, OS, Browser
   ipAddress    String?   @map("ip_address")
+  location     String?   @map("location")
   isRevoked    Boolean   @default(false) @map("is_revoked") // true nếu tk đăng xuất hoặc bị khoá từ xa
   expiresAt    DateTime  @map("expires_at")
   createdAt    DateTime  @default(now()) @map("created_at")
@@ -176,6 +177,7 @@ model AuthLog {
   userId       String?   @map("user_id") @db.Uuid // Có thể null nếu test đăng nhập sai email
   action       String    // LOGIN_SUCCESS, LOGIN_FAILED, PASSWORD_CHANGE, 2FA_ENABLE, LOGOUT
   ipAddress    String?   @map("ip_address")
+  location     String?   @map("location")
   deviceInfo   String?   @map("device_info")
   status       String    // SUCCESS / FAILED
   failureReason String?  @map("failure_reason") // VD: Wrong password, IP Blocked

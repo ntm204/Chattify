@@ -15,6 +15,7 @@ import { TwoFactorService } from './two-factor.service';
 import { LockoutService } from './lockout.service';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
 import { AUTH_MESSAGES } from '../../../core/config/auth.messages';
+import { getLocationFromIp } from '../../../core/utils/geo.util';
 import * as bcrypt from 'bcrypt';
 
 /**
@@ -61,11 +62,14 @@ export class AuthService {
     // Mark email as verified via UsersService
     await this.usersService.markEmailVerified(data.email);
 
+    const location = getLocationFromIp(data.ipAddress);
+
     // Create authenticated session
     const session = await this.tokenService.createSessionForUser(
       user.id,
       data.ipAddress,
       data.deviceInfo,
+      location,
     );
     await this.prisma.authLog.create({
       data: {
@@ -73,6 +77,7 @@ export class AuthService {
         action: 'LOGIN_SUCCESS',
         status: 'SUCCESS',
         ipAddress: data.ipAddress,
+        location,
         deviceInfo: data.deviceInfo,
       },
     });
@@ -104,6 +109,8 @@ export class AuthService {
         data.ipAddress,
       );
 
+      const location = getLocationFromIp(data.ipAddress);
+
       await this.prisma.authLog.create({
         data: {
           userId: user?.id || null,
@@ -111,6 +118,7 @@ export class AuthService {
           status: 'FAILED',
           failureReason: 'Invalid credentials',
           ipAddress: data.ipAddress,
+          location,
           deviceInfo: data.deviceInfo,
         },
       });
@@ -148,10 +156,13 @@ export class AuthService {
       };
     }
 
+    const location = getLocationFromIp(data.ipAddress);
+
     const session = await this.tokenService.createSessionForUser(
       user.id,
       data.ipAddress,
       data.deviceInfo,
+      location,
     );
 
     await this.prisma.authLog.create({
@@ -160,6 +171,7 @@ export class AuthService {
         action: 'LOGIN_SUCCESS',
         status: 'SUCCESS',
         ipAddress: data.ipAddress,
+        location,
         deviceInfo: data.deviceInfo,
       },
     });
@@ -191,10 +203,13 @@ export class AuthService {
       throw new UnauthorizedException(AUTH_MESSAGES.USER_NOT_FOUND);
     }
 
+    const location = getLocationFromIp(context.ipAddress);
+
     const session = await this.tokenService.createSessionForUser(
       userId,
       context.ipAddress,
       context.deviceInfo,
+      location,
     );
 
     await this.prisma.authLog.create({
@@ -203,6 +218,7 @@ export class AuthService {
         action: 'LOGIN_SUCCESS_2FA',
         status: 'SUCCESS',
         ipAddress: context.ipAddress,
+        location,
         deviceInfo: context.deviceInfo,
       },
     });

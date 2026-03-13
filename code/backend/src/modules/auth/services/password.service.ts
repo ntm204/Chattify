@@ -13,6 +13,7 @@ import { ResetPasswordDto } from '../dto/reset-password.dto';
 import { ChangePasswordDto } from '../dto/change-password.dto';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
 import { AUTH_MESSAGES } from '../../../core/config/auth.messages';
+import { getLocationFromIp } from '../../../core/utils/geo.util';
 import * as bcrypt from 'bcrypt';
 
 /**
@@ -63,12 +64,15 @@ export class PasswordService {
       data: { passwordHash },
     });
 
+    const location = getLocationFromIp(context?.ipAddress);
+
     await this.prisma.authLog.create({
       data: {
         userId: user.id,
         action: 'PASSWORD_RESET',
         status: 'SUCCESS',
         ipAddress: context?.ipAddress,
+        location,
         deviceInfo: context?.deviceInfo,
       },
     });
@@ -109,12 +113,15 @@ export class PasswordService {
       data: { passwordHash },
     });
 
+    const location = getLocationFromIp(context?.ipAddress);
+
     await this.prisma.authLog.create({
       data: {
         userId,
         action: 'PASSWORD_CHANGE',
         status: 'SUCCESS',
         ipAddress: context?.ipAddress,
+        location,
         deviceInfo: context?.deviceInfo,
       },
     });

@@ -50,6 +50,7 @@ export class TokenService {
     userId: string,
     ipAddress?: string,
     deviceInfo?: string,
+    location?: string | null,
   ) {
     // Use Prisma transaction but execute Redis commands afterwards to ensure we don't mix tx state
     const sessionVariables = await this.prisma.$transaction(
@@ -66,6 +67,7 @@ export class TokenService {
             refreshToken: hashedRefreshToken,
             deviceInfo,
             ipAddress,
+            location,
             expiresAt: sessionExpiresAt,
           },
         });
