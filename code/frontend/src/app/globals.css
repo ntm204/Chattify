@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ebebeb;
+  --foreground: #111111;
+  --input-bg: #e2e2e2;
+  --input-border: #e2e2e2;
+  --input-focus: #b0b0b0;
+  --text-secondary: #555555;
+  --text-muted: #aaaaaa;
+  --btn-bg: #111111;
+  --btn-text: #ffffff;
+  --link-color: #8d89a9;
+  --radius: 14px;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  scrollbar-gutter: stable;
+  overflow-x: hidden;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.animate-fade-up {
+  animation: fadeUp 0.25s ease both;
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #00000020;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #00000040;
+}
