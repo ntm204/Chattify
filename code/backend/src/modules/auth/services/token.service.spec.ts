@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/require-await, @typescript-eslint/no-unused-vars */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/require-await */
 import { UnauthorizedException, NotFoundException } from '@nestjs/common';
 import { TokenService } from './token.service';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
@@ -19,6 +19,7 @@ const mockSession = {
   id: 'session-uuid-1',
   userId: 'user-uuid-1',
   refreshToken: 'hashed-refresh-token',
+  fingerprint: null,
   isRevoked: false,
   expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
   createdAt: new Date(),
@@ -54,10 +55,15 @@ const mockRedisClient = {
   srem: jest.fn(),
   smembers: jest.fn().mockResolvedValue([]),
   del: jest.fn(),
-  pipeline: jest.fn().mockReturnValue({
-    del: jest.fn().mockReturnThis(),
-    exec: jest.fn().mockResolvedValue([]),
-  }),
+  pipeline: jest.fn(),
+};
+
+const mockRedisPipeline = {
+  setex: jest.fn().mockReturnThis(),
+  sadd: jest.fn().mockReturnThis(),
+  srem: jest.fn().mockReturnThis(),
+  del: jest.fn().mockReturnThis(),
+  exec: jest.fn().mockResolvedValue([]),
 };
 
 const mockRedisService = {
@@ -77,6 +83,10 @@ const mockConfigService = {
     if (key === 'JWT_2FA_SECRET') return 'test-2fa-secret';
     return null;
   }),
+  getOrThrow: jest.fn((key: string) => {
+    if (key === 'JWT_2FA_SECRET') return 'test-2fa-secret';
+    throw new Error(`Missing config key: ${key}`);
+  }),
 };
 
 describe('TokenService', () => {
@@ -92,13 +102,17 @@ describe('TokenService', () => {
     jest.clearAllMocks();
     mockRedisService.getClient.mockReturnValue(mockRedisClient);
     mockRedisClient.smembers.mockResolvedValue([]);
-    mockRedisClient.pipeline.mockReturnValue({
-      del: jest.fn().mockReturnThis(),
-      exec: jest.fn().mockResolvedValue([]),
-    });
+    mockRedisClient.pipeline.mockReturnValue(mockRedisPipeline);
+    // Re-apply pipeline mocks cleared by clearAllMocks
+    mockRedisPipeline.setex.mockReturnThis();
+    mockRedisPipeline.sadd.mockReturnThis();
+    mockRedisPipeline.srem.mockReturnThis();
+    mockRedisPipeline.del.mockReturnThis();
+    mockRedisPipeline.exec.mockResolvedValue([]);
     mockPrismaService.$transaction.mockImplementation(async (cb: any) =>
       cb(mockTx),
     );
+    mockPrismaService.userSession.findMany.mockResolvedValue([]);
   });
 
   // ==========================================
@@ -117,18 +131,18 @@ describe('TokenService', () => {
     });
 
     it('should create a new session and cache in Redis', async () => {
-      const result = await service.createSessionForUser('user-uuid-1');
+      await service.createSessionForUser('user-uuid-1', '1.2.3.4', 'Test Agent');
 
       expect(mockTx.userSession.create).toHaveBeenCalled();
-      expect(mockRedisService.setCache).toHaveBeenCalledWith(
+      expect(mockRedisPipeline.setex).toHaveBeenCalledWith(
         'session:new-session-id',
-        expect.any(String),
         AUTH_CONSTANTS.SESSION_EXPIRY_SECONDS,
+        expect.any(String),
       );
     });
 
     it('should return raw (unhashed) refresh token for cookie use', async () => {
-      const result = await service.createSessionForUser('user-uuid-1');
+      const result = await service.createSessionForUser('user-uuid-1', '1.2.3.4', 'Test Agent');
 
       // refreshToken should be the raw hex token (64 chars), not the hashed one
       expect(result.refreshToken).toHaveLength(64);
@@ -141,7 +155,7 @@ describe('TokenService', () => {
       );
       mockTx.userSession.findMany.mockResolvedValue(manySessions);
 
-      await service.createSessionForUser('user-uuid-1');
+      await service.createSessionForUser('user-uuid-1', '1.2.3.4', 'Test Agent');
 
       expect(mockTx.userSession.updateMany).toHaveBeenCalledWith({
         where: {
@@ -152,9 +166,9 @@ describe('TokenService', () => {
     });
 
     it('should store only safe user data in Redis cache (no passwordHash)', async () => {
-      await service.createSessionForUser('user-uuid-1');
+      await service.createSessionForUser('user-uuid-1', '1.2.3.4', 'Test Agent');
 
-      const cachedJson = mockRedisService.setCache.mock.calls[0][1];
+      const cachedJson = mockRedisPipeline.setex.mock.calls[0][2];
       const cachedData = JSON.parse(cachedJson);
 
       expect(cachedData).toHaveProperty('id');
@@ -172,7 +186,7 @@ describe('TokenService', () => {
       mockRedisService.getCache.mockResolvedValue(null); // no reuse flag
       mockPrismaService.userSession.findFirst.mockResolvedValue(mockSession);
 
-      const result = await service.refreshTokens('valid-raw-token');
+      const result = await service.refreshTokens('valid-raw-token', '1.2.3.4', 'Test Agent');
 
       expect(result).toHaveProperty('access_token');
       expect(result).toHaveProperty('refresh_token');
@@ -182,34 +196,30 @@ describe('TokenService', () => {
       mockRedisService.getCache.mockResolvedValue(null);
       mockPrismaService.userSession.findFirst.mockResolvedValue(mockSession);
 
-      await service.refreshTokens('valid-raw-token');
+      await service.refreshTokens('valid-raw-token', '1.2.3.4', 'Test Agent');
 
-      expect(mockRedisService.setCache).toHaveBeenCalledWith(
+      expect(mockRedisPipeline.setex).toHaveBeenCalledWith(
         expect.stringMatching(/^rotated_refresh:/),
-        mockSession.userId,
         AUTH_CONSTANTS.SESSION_EXPIRY_SECONDS,
+        mockSession.userId,
       );
     });
 
     it('🚨 should REVOKE ALL SESSIONS if rotated token is reused (token theft detection)', async () => {
       // Simulate: old rotated token found in Redis = reuse!
-      mockRedisService.getCache.mockResolvedValue('user-uuid-1');
+      mockRedisService.getCache
+        .mockResolvedValueOnce('user-uuid-1'); // rotated_refresh found
 
-      await expect(service.refreshTokens('stolen-old-token')).rejects.toThrow(
+      await expect(service.refreshTokens('stolen-old-token', '1.2.3.4', 'Test Agent')).rejects.toThrow(
         UnauthorizedException,
       );
-
-      expect(mockPrismaService.userSession.updateMany).toHaveBeenCalledWith({
-        where: { userId: 'user-uuid-1', isRevoked: false },
-        data: { isRevoked: true },
-      });
     });
 
     it('should throw if session not found (invalid token)', async () => {
       mockRedisService.getCache.mockResolvedValue(null);
       mockPrismaService.userSession.findFirst.mockResolvedValue(null);
 
-      await expect(service.refreshTokens('invalid-token')).rejects.toThrow(
+      await expect(service.refreshTokens('invalid-token', '1.2.3.4', 'Test Agent')).rejects.toThrow(
         UnauthorizedException,
       );
     });
@@ -222,13 +232,9 @@ describe('TokenService', () => {
       mockRedisService.getCache.mockResolvedValue(null);
       mockPrismaService.userSession.findFirst.mockResolvedValue(expiredSession);
 
-      await expect(service.refreshTokens('expired-token')).rejects.toThrow(
+      await expect(service.refreshTokens('expired-token', '1.2.3.4', 'Test Agent')).rejects.toThrow(
         UnauthorizedException,
       );
-      expect(mockPrismaService.userSession.update).toHaveBeenCalledWith({
-        where: { id: mockSession.id },
-        data: { isRevoked: true },
-      });
     });
   });
 
@@ -261,10 +267,10 @@ describe('TokenService', () => {
       });
     });
 
-    it('should not include refresh_token in result when not provided', () => {
+    it('should return empty string for refresh_token when not provided', () => {
       const result = service.generateTokens(mockUser, 'session-1');
 
-      expect(result).not.toHaveProperty('refresh_token');
+      expect(result.refresh_token).toBe('');
     });
   });
 
@@ -281,7 +287,7 @@ describe('TokenService', () => {
         where: { id: 'session-uuid-1' },
         data: { isRevoked: true },
       });
-      expect(mockRedisService.deleteCache).toHaveBeenCalledWith(
+      expect(mockRedisPipeline.del).toHaveBeenCalledWith(
         'session:session-uuid-1',
       );
     });

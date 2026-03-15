@@ -1,20 +1,25 @@
-import { Prisma, User, UserSession } from '@prisma/client';
+import { User } from '@prisma/client';
 import {
   Injectable,
-  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import { randomBytes, createHash } from 'crypto';
 import { PrismaService } from '../../../core/prisma/prisma.service';
 import { RedisService } from '../../../core/redis/redis.service';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
-import { randomBytes, createHash } from 'crypto';
+import { AUTH_MESSAGES } from '../../../core/config/auth.messages';
+
+interface JwtPayload {
+  sub: string;
+  sessionId?: string;
+  type?: string;
+}
 
 @Injectable()
 export class TokenService {
-  private readonly logger = new Logger(TokenService.name);
   private readonly jwt2FASecret: string;
 
   constructor(
@@ -23,28 +28,33 @@ export class TokenService {
     private readonly redisService: RedisService,
     private readonly configService: ConfigService,
   ) {
-    const secret2FA = this.configService.get<string>('JWT_2FA_SECRET');
-    if (!secret2FA) {
-      throw new Error(
-        'FATAL ERROR: JWT_2FA_SECRET environment variable is not defined!',
+    this.jwt2FASecret = this.configService.getOrThrow<string>('JWT_2FA_SECRET');
+  }
+
+  private hashToken = (t: string) =>
+    createHash('sha256').update(t).digest('hex');
+
+  /**
+   * Generates a device fingerprint based on User-Agent and IP portion.
+   * This binds the session to a specific device/context.
+   */
+  private generateFingerprint(ip?: string, deviceInfo?: string): string {
+    if (!ip && !deviceInfo) {
+      throw new UnauthorizedException(
+        'Không thể xác thực danh tính thiết bị. Vui lòng thử lại.',
       );
     }
-    this.jwt2FASecret = secret2FA;
+    const data = `${deviceInfo || 'no-ua'}-${ip || 'no-ip'}`;
+    return createHash('sha256').update(data).digest('hex');
   }
 
-  private hashToken(token: string): string {
-    return createHash('sha256').update(token).digest('hex');
-  }
-
-  private toSafeUserData(user: Partial<User>) {
-    return {
-      id: user.id,
-      email: user.email,
-      username: user.username,
-      displayName: user.displayName,
-      avatarUrl: user.avatarUrl,
-    };
-  }
+  private toSafeUserData = (u: Partial<User>) => ({
+    id: u.id!,
+    email: u.email ?? null,
+    username: u.username!,
+    displayName: u.displayName!,
+    avatarUrl: u.avatarUrl ?? null,
+  });
 
   async createSessionForUser(
     userId: string,
@@ -52,28 +62,24 @@ export class TokenService {
     deviceInfo?: string,
     location?: string | null,
   ) {
-    // Use Prisma transaction but execute Redis commands afterwards to ensure we don't mix tx state
-    const sessionVariables = await this.prisma.$transaction(
-      async (tx: Prisma.TransactionClient) => {
-        const rawRefreshToken = randomBytes(32).toString('hex');
-        const hashedRefreshToken = this.hashToken(rawRefreshToken);
-        const sessionExpiresAt = new Date(
-          Date.now() + AUTH_CONSTANTS.SESSION_EXPIRY_MS,
-        );
+    const fingerprint = this.generateFingerprint(ipAddress, deviceInfo);
 
+    const { session, rawRefreshToken, user, sessionsToRevokeIds } =
+      await this.prisma.$transaction(async (tx) => {
+        const rawRefreshToken = randomBytes(32).toString('hex');
         const session = await tx.userSession.create({
           data: {
             userId,
-            refreshToken: hashedRefreshToken,
+            refreshToken: this.hashToken(rawRefreshToken),
+            fingerprint,
             deviceInfo,
             ipAddress,
             location,
-            expiresAt: sessionExpiresAt,
+            expiresAt: new Date(Date.now() + AUTH_CONSTANTS.SESSION_EXPIRY_MS),
           },
         });
 
         const user = await tx.user.findUnique({ where: { id: userId } });
-
         const activeSessions = await tx.userSession.findMany({
           where: { userId, isRevoked: false },
           orderBy: { createdAt: 'desc' },
@@ -83,38 +89,30 @@ export class TokenService {
         if (activeSessions.length > AUTH_CONSTANTS.MAX_SESSIONS_PER_USER) {
           sessionsToRevokeIds = activeSessions
             .slice(AUTH_CONSTANTS.MAX_SESSIONS_PER_USER)
-            .map((s: UserSession) => s.id);
+            .map((s) => s.id);
           await tx.userSession.updateMany({
             where: { id: { in: sessionsToRevokeIds } },
             data: { isRevoked: true },
           });
         }
-
         return { session, rawRefreshToken, user, sessionsToRevokeIds };
-      },
-    );
+      });
 
-    // Update Redis Cache outside transaction
-    const { session, rawRefreshToken, user, sessionsToRevokeIds } =
-      sessionVariables;
+    const redis = this.redisService.getClient();
+    const pipeline = redis.pipeline();
+    const safeUser = this.toSafeUserData(user!);
 
-    await this.redisService.setCache(
+    pipeline.setex(
       `session:${session.id}`,
-      JSON.stringify(this.toSafeUserData(user!)),
       AUTH_CONSTANTS.SESSION_EXPIRY_SECONDS,
+      JSON.stringify(safeUser),
     );
-
-    // Add to user_sessions set
-    const redisClient = this.redisService.getClient();
-    await redisClient.sadd(`user_sessions:${user?.id}`, session.id);
-
-    // Remove revoked over-limit sessions from cache
-    if (sessionsToRevokeIds.length > 0) {
-      for (const revokedId of sessionsToRevokeIds) {
-        await this.redisService.deleteCache(`session:${revokedId}`);
-        await redisClient.srem(`user_sessions:${user?.id}`, revokedId);
-      }
-    }
+    pipeline.sadd(`user_sessions:${userId}`, session.id);
+    sessionsToRevokeIds.forEach((id) => {
+      pipeline.del(`session:${id}`);
+      pipeline.srem(`user_sessions:${userId}`, id);
+    });
+    await pipeline.exec();
 
     return { ...session, refreshToken: rawRefreshToken };
   }
@@ -137,70 +135,59 @@ export class TokenService {
     const session = await this.prisma.userSession.findFirst({
       where: { id: sessionId, userId },
     });
-
-    if (!session) {
-      throw new NotFoundException('Không tìm thấy phiên đăng nhập này!');
-    }
+    if (!session) throw new NotFoundException(AUTH_MESSAGES.SESSION_NOT_FOUND);
 
     await this.prisma.userSession.update({
       where: { id: sessionId },
       data: { isRevoked: true },
     });
+    const redis = this.redisService.getClient();
+    await redis
+      .pipeline()
+      .del(`session:${sessionId}`)
+      .srem(`user_sessions:${userId}`, sessionId)
+      .exec();
 
-    await this.redisService.deleteCache(`session:${sessionId}`);
-    const redisClient = this.redisService.getClient();
-    await redisClient.srem(`user_sessions:${userId}`, sessionId);
-
-    return { message: 'Đã đăng xuất thiết bị thành công!' };
+    return { message: AUTH_MESSAGES.SESSION_REVOKE_SUCCESS };
   }
 
   async revokeAllSessions(userId: string) {
-    // 1. Revoke in PostgreSQL
     await this.prisma.userSession.updateMany({
       where: { userId, isRevoked: false },
       data: { isRevoked: true },
     });
-
-    // 2. Query all known session IDs from PostgreSQL as fallback against Redis Set eviction
     const dbSessions = await this.prisma.userSession.findMany({
       where: { userId },
       select: { id: true },
     });
-
-    // 3. Cleanup Redis using combined data
-    const redisClient = this.redisService.getClient();
-    const activeRedisSessions = await redisClient.smembers(
-      `user_sessions:${userId}`,
-    );
-
-    const allSessionIdsToClear = new Set([
+    const redis = this.redisService.getClient();
+    const activeRedisSessions = await redis.smembers(`user_sessions:${userId}`);
+    const allIds = new Set([
       ...(activeRedisSessions || []),
-      ...(dbSessions || []).map((s) => s.id),
+      ...dbSessions.map((s) => s.id),
     ]);
 
-    if (allSessionIdsToClear.size === 0) return;
-
-    const pipeline = redisClient.pipeline();
-    for (const sessionId of allSessionIdsToClear) {
-      pipeline.del(`session:${sessionId}`);
-    }
+    if (allIds.size === 0) return;
+    const pipeline = redis.pipeline();
+    allIds.forEach((id) => pipeline.del(`session:${id}`));
     pipeline.del(`user_sessions:${userId}`);
     await pipeline.exec();
   }
 
-  async refreshTokens(refreshToken: string) {
+  async refreshTokens(
+    refreshToken: string,
+    ipAddress?: string,
+    deviceInfo?: string,
+  ): Promise<{ access_token: string; refresh_token: string; user: any }> {
     const hashedToken = this.hashToken(refreshToken);
 
     const reuseFlag = await this.redisService.getCache(
       `rotated_refresh:${hashedToken}`,
     );
     if (reuseFlag) {
-      this.logger.warn(
-        `🚨 Refresh token reuse detected! Revoking all sessions for userId: ${reuseFlag}`,
-      );
       await this.revokeAllSessions(reuseFlag);
       throw new UnauthorizedException(
-        'Phát hiện hoạt động đáng ngờ. Tất cả phiên đã bị đăng xuất vì lý do bảo mật.',
+        AUTH_MESSAGES.REFRESH_TOKEN_REUSE_DETECTED,
       );
     }
 
@@ -208,46 +195,62 @@ export class TokenService {
       where: { refreshToken: hashedToken, isRevoked: false },
       include: { user: true },
     });
+    if (!session)
+      throw new UnauthorizedException(AUTH_MESSAGES.REFRESH_TOKEN_INVALID);
 
-    if (!session) {
+    // Token Binding Check (Fingerprint) MUST be first to prevent Grace Period bypass
+    const currentFingerprint = this.generateFingerprint(ipAddress, deviceInfo);
+    if (session.fingerprint && session.fingerprint !== currentFingerprint) {
+      await this.revokeSession(session.userId, session.id);
       throw new UnauthorizedException(
-        'Refresh Token không hợp lệ hoặc thiết bị đã bị đăng xuất!',
+        'Phiên làm việc không hợp lệ (Phát hiện thay đổi thiết bị bất thường). Vui lòng đăng nhập lại.',
       );
     }
+
+    // Grace Period Check
+    const graceData = await this.redisService.getCache(
+      `refresh_grace:${hashedToken}`,
+    );
+    if (graceData)
+      return JSON.parse(graceData) as {
+        access_token: string;
+        refresh_token: string;
+        user: any;
+      };
 
     if (new Date() > session.expiresAt) {
-      await this.prisma.userSession.update({
-        where: { id: session.id },
-        data: { isRevoked: true },
-      });
-      await this.redisService.deleteCache(`session:${session.id}`);
-      const redisClient = this.redisService.getClient();
-      await redisClient.srem(`user_sessions:${session.userId}`, session.id);
-      throw new UnauthorizedException(
-        'Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại!',
-      );
+      await this.revokeSession(session.userId, session.id);
+      throw new UnauthorizedException(AUTH_MESSAGES.SESSION_EXPIRED);
     }
 
-    const newRawRefreshToken = randomBytes(32).toString('hex');
-    const newHashedRefreshToken = this.hashToken(newRawRefreshToken);
+    const newRaw = randomBytes(32).toString('hex');
     await this.prisma.userSession.update({
       where: { id: session.id },
-      data: { refreshToken: newHashedRefreshToken },
+      data: { refreshToken: this.hashToken(newRaw) },
     });
 
-    await this.redisService.setCache(
-      `rotated_refresh:${hashedToken}`,
-      session.userId,
-      AUTH_CONSTANTS.SESSION_EXPIRY_SECONDS,
-    );
+    const tokens = this.generateTokens(session.user, session.id, newRaw);
+    const redis = this.redisService.getClient();
+    await redis
+      .pipeline()
+      .setex(
+        `rotated_refresh:${hashedToken}`,
+        AUTH_CONSTANTS.SESSION_EXPIRY_SECONDS,
+        session.userId,
+      )
+      .setex(
+        `refresh_grace:${hashedToken}`,
+        AUTH_CONSTANTS.REFRESH_TOKEN_GRACE_PERIOD_SECONDS,
+        JSON.stringify(tokens),
+      )
+      .setex(
+        `session:${session.id}`,
+        AUTH_CONSTANTS.SESSION_EXPIRY_SECONDS,
+        JSON.stringify(this.toSafeUserData(session.user)),
+      )
+      .exec();
 
-    await this.redisService.setCache(
-      `session:${session.id}`,
-      JSON.stringify(this.toSafeUserData(session.user)),
-      AUTH_CONSTANTS.SESSION_EXPIRY_SECONDS,
-    );
-
-    return this.generateTokens(session.user, session.id, newRawRefreshToken);
+    return tokens;
   }
 
   generateTokens(
@@ -255,24 +258,11 @@ export class TokenService {
     sessionId: string,
     refreshToken?: string,
   ) {
-    const payload: { sub: string; sessionId?: string } = {
-      sub: user.id!,
-    };
-
-    if (sessionId) {
-      payload.sessionId = sessionId;
-    }
-
-    const result: Record<string, unknown> = {
-      access_token: this.jwtService.sign(payload),
+    return {
+      access_token: this.jwtService.sign({ sub: user.id, sessionId }),
+      refresh_token: refreshToken || '',
       user: this.toSafeUserData(user),
     };
-
-    if (refreshToken) {
-      result.refresh_token = refreshToken;
-    }
-
-    return result;
   }
 
   generateTemp2FAToken(userId: string) {
@@ -290,16 +280,21 @@ export class TokenService {
       const payload: unknown = this.jwtService.verify(token, {
         secret: this.jwt2FASecret,
       });
-      if (
-        typeof payload === 'object' &&
-        payload !== null &&
-        (payload as Record<string, unknown>).type === '2FA_TEMP'
-      ) {
-        return (payload as Record<string, unknown>).sub as string;
+      if (this.isJwtPayload(payload) && payload.type === '2FA_TEMP') {
+        return payload.sub;
       }
       return null;
     } catch {
       return null;
     }
+  }
+
+  private isJwtPayload(payload: unknown): payload is JwtPayload {
+    if (!payload || typeof payload !== 'object') return false;
+    const p = payload as Record<string, unknown>;
+    return (
+      typeof p.sub === 'string' &&
+      (!('type' in p) || typeof p.type === 'string')
+    );
   }
 }

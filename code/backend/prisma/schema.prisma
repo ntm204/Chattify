@@ -50,9 +50,9 @@ enum FileType {
 
 model User {
   id            String    @id @default(uuid()) @db.Uuid
-  email         String    @unique
+  email         String?   @unique
   phone         String?   @unique
-  passwordHash  String    @map("password_hash")
+  passwordHash  String?   @map("password_hash")
   username      String    @unique
   displayName   String    @map("display_name")
   avatarUrl     String?   @map("avatar_url")
@@ -76,8 +76,22 @@ model User {
   sessions               UserSession[]
   authLogs               AuthLog[]
   twoFactorAuth          TwoFactorAuth?
+  passwordHistories      PasswordHistory[]
 
+  @@index([displayName])
   @@map("users")
+}
+
+model PasswordHistory {
+  id           String    @id @default(uuid()) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  passwordHash String    @map("password_hash")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_histories")
 }
 
 model Friendship {
@@ -159,6 +173,7 @@ model UserSession {
   id           String    @id @default(uuid()) @db.Uuid
   userId       String    @map("user_id") @db.Uuid
   refreshToken String    @unique @map("refresh_token")
+  fingerprint  String?   // Hash of User-Agent + IP portion
   deviceInfo   String?   @map("device_info") // Tên thiết bị, OS, Browser
   ipAddress    String?   @map("ip_address")
   location     String?   @map("location")
@@ -186,6 +201,7 @@ model AuthLog {
   user         User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([userId, createdAt])
+  @@index([action, status])
   @@map("auth_logs")
 }
 
@@ -193,8 +209,9 @@ model TwoFactorAuth {
   id         String    @id @default(uuid()) @db.Uuid
   userId     String    @unique @map("user_id") @db.Uuid
   secret     String    // Mã bí mật dùng để liên kết với Google Authenticator
-  isEnabled  Boolean   @default(false) @map("is_enabled") // false nếu user vừa quét QR nhưng chưa bật
-  createdAt  DateTime  @default(now()) @map("created_at")
+  isEnabled     Boolean   @default(false) @map("is_enabled") // false nếu user vừa quét QR nhưng chưa bật
+  recoveryCodes String[]  @map("recovery_codes") // Backup codes
+  createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @updatedAt @map("updated_at")
 
   user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)

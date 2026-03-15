@@ -1,28 +1,45 @@
 import {
   Injectable,
-  ConflictException,
   InternalServerErrorException,
+  Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../core/prisma/prisma.service';
-import { Prisma } from '@prisma/client';
-import { RegisterDto } from '../auth/dto/register.dto';
+import { Prisma, User } from '@prisma/client';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { randomUUID } from 'crypto';
+
+import {
+  CreateUserResult,
+  CreateUserStatus,
+} from './interfaces/user.interface';
+
+type CreateUserInput = {
+  email: string;
+  username: string;
+  displayName: string;
+};
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
   /** Safe select fields for User to prevent leaking sensitive data */
   private readonly USER_PUBLIC_SELECT = {
     id: true,
     email: true,
+    phone: true,
     username: true,
     displayName: true,
     avatarUrl: true,
+    isVerified: true,
     createdAt: true,
   } as const;
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async createUser(data: RegisterDto, passwordHash: string) {
+  async createUser(
+    data: CreateUserInput,
+    passwordHash: string,
+  ): Promise<CreateUserResult> {
     const existingUser = await this.prisma.user.findFirst({
       where: {
         OR: [{ email: data.email }, { username: data.username }],
@@ -31,59 +48,89 @@ export class UsersService {
 
     if (existingUser) {
       if (!existingUser.isVerified && existingUser.email === data.email) {
-        // Allow re-registration to update info if not yet verified
-        return this.prisma.user.update({
-          where: { id: existingUser.id },
+        return {
+          user: existingUser,
+          status: CreateUserStatus.EXISTS_UNVERIFIED,
+        };
+      }
+      return { user: existingUser, status: CreateUserStatus.EXISTS_VERIFIED };
+    }
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const newUser = await tx.user.create({
           data: {
+            email: data.email,
             username: data.username,
             displayName: data.displayName,
             passwordHash,
           },
-          select: this.USER_PUBLIC_SELECT,
         });
-      }
 
-      if (existingUser.email === data.email) {
-        throw new ConflictException('Email này đã được sử dụng!');
-      }
-      throw new ConflictException('Username này đã tồn tại!');
-    }
+        await tx.passwordHistory.create({
+          data: {
+            userId: newUser.id,
+            passwordHash,
+          },
+        });
 
-    try {
-      return await this.prisma.user.create({
-        data: {
-          email: data.email,
-          username: data.username,
-          displayName: data.displayName,
-          passwordHash,
-        },
-        select: this.USER_PUBLIC_SELECT,
+        return { user: newUser, status: CreateUserStatus.CREATED };
       });
     } catch (error) {
+      // Handle potential race conditions where user was created between findFirst and create
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
-        const target = (error.meta?.target as string[]) || [];
-        if (target.includes('email')) {
-          throw new ConflictException('Email này đã được sử dụng!');
+        const reFoundUser = await this.prisma.user.findFirst({
+          where: { OR: [{ email: data.email }, { username: data.username }] },
+        });
+        if (!reFoundUser) {
+          throw new InternalServerErrorException(
+            'Lỗi hệ thống khi tạo tài khoản.',
+          );
         }
-        if (target.includes('username')) {
-          throw new ConflictException('Username này đã tồn tại!');
-        }
-        throw new ConflictException(
-          'Thông tin đăng ký đã tồn tại, vui lòng thử lại!',
-        );
+        return {
+          user: reFoundUser,
+          status: reFoundUser.isVerified
+            ? CreateUserStatus.EXISTS_VERIFIED
+            : CreateUserStatus.EXISTS_UNVERIFIED,
+        };
       }
+      throw new InternalServerErrorException('Lỗi hệ thống khi tạo tài khoản.');
+    }
+  }
+
+  /**
+   * Create a new user via Phone (Passwordless)
+   */
+  async createPhoneUser(phoneNumber: string): Promise<User> {
+    const username = `user_${randomUUID().split('-')[0]}`;
+
+    try {
+      return await this.prisma.user.create({
+        data: {
+          phone: phoneNumber,
+          email: null,
+          username,
+          displayName: `User ${phoneNumber.slice(-4)}`,
+          passwordHash: null,
+          isVerified: true,
+        },
+      });
+    } catch (error) {
+      this.logger.error('Error creating phone user', error);
       throw new InternalServerErrorException(
-        'Lỗi hệ thống khi tạo tài khoản. Vui lòng thử lại sau.',
+        'Lỗi hệ thống khi đăng ký bằng số điện thoại.',
       );
     }
   }
 
-  async findByEmail(email: string) {
-    return this.prisma.user.findUnique({
-      where: { email },
+  async findByIdentifier(identifier: string) {
+    return this.prisma.user.findFirst({
+      where: {
+        OR: [{ email: identifier }, { phone: identifier }],
+      },
       select: {
         ...this.USER_PUBLIC_SELECT,
         isVerified: true,
@@ -91,20 +138,20 @@ export class UsersService {
     });
   }
 
-  async findByEmailWithPassword(email: string) {
-    return this.prisma.user.findUnique({
-      where: { email },
+  async findByIdentifierWithPassword(identifier: string) {
+    return this.prisma.user.findFirst({
+      where: {
+        OR: [{ email: identifier }, { phone: identifier }],
+      },
     });
   }
 
-  async markEmailVerified(email: string) {
-    return this.prisma.user.update({
-      where: { email },
+  async markIdentifierVerified(identifier: string) {
+    return this.prisma.user.updateMany({
+      where: {
+        OR: [{ email: identifier }, { phone: identifier }],
+      },
       data: { isVerified: true },
-      select: {
-        ...this.USER_PUBLIC_SELECT,
-        isVerified: true,
-      },
     });
   }
 
@@ -114,6 +161,7 @@ export class UsersService {
       select: {
         id: true,
         email: true,
+        phone: true,
         username: true,
         displayName: true,
         avatarUrl: true,

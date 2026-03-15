@@ -52,7 +52,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     );
     let user: {
       id: string;
-      email: string;
+      email: string | null;
       username: string;
       displayName: string;
       avatarUrl: string | null;
@@ -99,7 +99,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
           expirySecs,
         );
         const redisClient = this.redisService.getClient();
-        await redisClient.sadd(`user_sessions:${user.id}`, session.id);
+        await redisClient.sadd(`user_sessions:${session.user.id}`, session.id);
       }
     }
 

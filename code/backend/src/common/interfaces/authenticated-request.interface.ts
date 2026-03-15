@@ -2,7 +2,8 @@ import { Request } from 'express';
 
 export interface AuthenticatedUser {
   id: string;
-  email: string;
+  email: string | null;
+  phone: string | null;
   username: string;
   displayName: string;
   avatarUrl: string | null;

@@ -1,8 +1,9 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/require-await */
 import { UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
-import * as bcrypt from 'bcrypt';
+import { CreateUserStatus } from '../../users/interfaces/user.interface';
+import { AUTH_MESSAGES } from '../../../core/config/auth.messages';
+import { AuthUtils } from '../../../core/utils/auth.util';
 
 // ==========================================
 // Mock Data
@@ -27,11 +28,11 @@ const mockSession = {
 // Mocks
 // ==========================================
 const mockUsersService = {
-  findByEmail: jest.fn(),
-  findByEmailWithPassword: jest.fn(),
+  findByIdentifier: jest.fn(),
+  findByIdentifierWithPassword: jest.fn(),
   findById: jest.fn(),
   createUser: jest.fn(),
-  markEmailVerified: jest.fn(),
+  markIdentifierVerified: jest.fn(),
 };
 
 const mockPrismaService = {
@@ -72,6 +73,17 @@ const mockLockoutService = {
   resetLoginAttempts: jest.fn(),
 };
 
+const mockAuthAuditService = {
+  log: jest.fn(),
+  isNewDevice: jest.fn().mockResolvedValue(false),
+};
+
+const mockMailService = {
+  sendOtpEmail: jest.fn(),
+  sendPasswordResetOtpEmail: jest.fn(),
+  sendSecurityAlertEmail: jest.fn(),
+};
+
 describe('AuthService', () => {
   let service: AuthService;
 
@@ -83,8 +95,16 @@ describe('AuthService', () => {
       mockOtpService as any,
       mockTwoFactorService as any,
       mockLockoutService as any,
+      mockAuthAuditService as any,
+      mockMailService as any,
     );
     jest.clearAllMocks();
+
+    // Mock static method to prevent real HIBP API calls
+    jest.spyOn(AuthUtils, 'isPasswordPwned').mockResolvedValue(false);
+
+    // Re-apply mocks cleared by clearAllMocks
+    mockAuthAuditService.isNewDevice.mockResolvedValue(false);
 
     // Default: no lockout
     mockLockoutService.checkIpLockout.mockResolvedValue(undefined);
@@ -103,10 +123,7 @@ describe('AuthService', () => {
     });
 
     // Pre-hash password
-    mockUser.passwordHash = await bcrypt.hash(
-      'CorrectPass123!',
-      AUTH_CONSTANTS.SALT_ROUNDS,
-    );
+    mockUser.passwordHash = await AuthUtils.hashPassword('CorrectPass123!');
   });
 
   // ==========================================
@@ -114,7 +131,10 @@ describe('AuthService', () => {
   // ==========================================
   describe('register', () => {
     it('should register user and send OTP', async () => {
-      mockUsersService.createUser.mockResolvedValue(mockUser);
+      mockUsersService.createUser.mockResolvedValue({
+        user: mockUser,
+        status: CreateUserStatus.CREATED,
+      });
 
       const result = await service.register({
         email: 'test@test.com',
@@ -123,14 +143,55 @@ describe('AuthService', () => {
         password: 'StrongPass123!',
       });
 
-      expect(result.message).toContain('Đăng ký thành công');
+      expect(result.message).toEqual(AUTH_MESSAGES.REGISTER_SUCCESS);
       expect(mockOtpService.generateAndSendOtp).toHaveBeenCalledWith(
         'test@test.com',
       );
     });
 
+    it('should NOT update password if email already exists but unverified (anti-takeover)', async () => {
+      mockUsersService.createUser.mockResolvedValue({
+        user: mockUser,
+        status: CreateUserStatus.EXISTS_UNVERIFIED,
+      });
+
+      const result = await service.register({
+        email: 'test@test.com',
+        username: 'newusername',
+        displayName: 'New Name',
+        password: 'NewPassword123!',
+      });
+
+      expect(result.message).toEqual(AUTH_MESSAGES.REGISTER_SUCCESS);
+      // It should still try to send OTP (subject to cooldown)
+      expect(mockOtpService.generateAndSendOtp).toHaveBeenCalledWith(
+        'test@test.com',
+      );
+    });
+
+    it('should return success even if email exists and verified (anti-enumeration)', async () => {
+      mockUsersService.createUser.mockResolvedValue({
+        user: mockUser,
+        status: CreateUserStatus.EXISTS_VERIFIED,
+      });
+
+      const result = await service.register({
+        email: 'test@test.com',
+        username: 'testuser',
+        displayName: 'Test User',
+        password: 'StrongPass123!',
+      });
+
+      expect(result.message).toEqual(AUTH_MESSAGES.REGISTER_SUCCESS);
+      // Should NOT send OTP for verified users
+      expect(mockOtpService.generateAndSendOtp).not.toHaveBeenCalled();
+    });
+
     it('should hash password with correct salt rounds before saving', async () => {
-      mockUsersService.createUser.mockResolvedValue(mockUser);
+      mockUsersService.createUser.mockResolvedValue({
+        user: mockUser,
+        status: CreateUserStatus.CREATED,
+      });
 
       await service.register({
         email: 'test@test.com',
@@ -140,7 +201,23 @@ describe('AuthService', () => {
       });
 
       const savedHash = mockUsersService.createUser.mock.calls[0][1];
-      expect(savedHash).toMatch(/^\$2[aby]\$\d+\$/);
+      expect(savedHash).toMatch(/^\$argon2id\$/);
+    });
+
+    it('should auto-generate username if omitted by client', async () => {
+      mockUsersService.createUser.mockResolvedValue({
+        user: mockUser,
+        status: CreateUserStatus.CREATED,
+      });
+
+      await service.register({
+        email: 'test.user+1@test.com',
+        displayName: 'Test User',
+        password: 'StrongPass123!',
+      } as any);
+
+      const createUserPayload = mockUsersService.createUser.mock.calls[0][0];
+      expect(createUserPayload.username).toMatch(/^[a-z0-9_]{3,20}$/);
     });
   });
 
@@ -149,14 +226,14 @@ describe('AuthService', () => {
   // ==========================================
   describe('login', () => {
     const loginDto = {
-      email: 'test@test.com',
+      identifier: 'test@test.com',
       password: 'CorrectPass123!',
       ipAddress: '127.0.0.1',
       deviceInfo: 'Jest Test Agent',
     };
 
     it('should login successfully with correct credentials', async () => {
-      mockUsersService.findByEmailWithPassword.mockResolvedValue(mockUser);
+      mockUsersService.findByIdentifierWithPassword.mockResolvedValue(mockUser);
       mockPrismaService.twoFactorAuth.findUnique.mockResolvedValue(null);
 
       const result = await service.login(loginDto);
@@ -168,7 +245,7 @@ describe('AuthService', () => {
     });
 
     it('should check IP lockout BEFORE account lockout (correct order)', async () => {
-      mockUsersService.findByEmailWithPassword.mockResolvedValue(mockUser);
+      mockUsersService.findByIdentifierWithPassword.mockResolvedValue(mockUser);
       mockPrismaService.twoFactorAuth.findUnique.mockResolvedValue(null);
 
       const callOrder: string[] = [];
@@ -192,8 +269,10 @@ describe('AuthService', () => {
       await expect(service.login(loginDto)).rejects.toThrow(
         UnauthorizedException,
       );
-      // Should NOT even call findByEmailWithPassword
-      expect(mockUsersService.findByEmailWithPassword).not.toHaveBeenCalled();
+      // Should NOT even call findByIdentifierWithPassword
+      expect(
+        mockUsersService.findByIdentifierWithPassword,
+      ).not.toHaveBeenCalled();
     });
 
     it('should throw if account is locked', async () => {
@@ -207,7 +286,7 @@ describe('AuthService', () => {
     });
 
     it('should throw on wrong password', async () => {
-      mockUsersService.findByEmailWithPassword.mockResolvedValue(mockUser);
+      mockUsersService.findByIdentifierWithPassword.mockResolvedValue(mockUser);
 
       await expect(
         service.login({ ...loginDto, password: 'WrongPass456!' }),
@@ -220,7 +299,7 @@ describe('AuthService', () => {
     });
 
     it('should throw on non-existent user (same error message as wrong password)', async () => {
-      mockUsersService.findByEmailWithPassword.mockResolvedValue(null);
+      mockUsersService.findByIdentifierWithPassword.mockResolvedValue(null);
 
       await expect(service.login(loginDto)).rejects.toThrow(
         UnauthorizedException,
@@ -231,7 +310,7 @@ describe('AuthService', () => {
     });
 
     it('🛡️ TIMING ATTACK: should process non-existent user the same as wrong password', async () => {
-      mockUsersService.findByEmailWithPassword.mockResolvedValue(null);
+      mockUsersService.findByIdentifierWithPassword.mockResolvedValue(null);
 
       // The key insight: if bcrypt.compare was NOT called with the dummyHash,
       // the code would throw much faster (timing attack detectable).
@@ -253,7 +332,7 @@ describe('AuthService', () => {
     });
 
     it('should show lockout WARNING when shouldWarn=true', async () => {
-      mockUsersService.findByEmailWithPassword.mockResolvedValue(mockUser);
+      mockUsersService.findByIdentifierWithPassword.mockResolvedValue(mockUser);
       mockLockoutService.incrementLoginAttempts.mockResolvedValue({
         emailAttempts: 8,
         shouldWarn: true,
@@ -261,7 +340,7 @@ describe('AuthService', () => {
 
       try {
         await service.login({ ...loginDto, password: 'WrongPass456!' });
-        fail('Should have thrown');
+        throw new Error('Should have thrown');
       } catch (error: any) {
         expect(error.message).toContain('Cảnh báo');
       }
@@ -272,13 +351,13 @@ describe('AuthService', () => {
         ...mockUser,
         isVerified: false,
       };
-      mockUsersService.findByEmailWithPassword.mockResolvedValue(
+      mockUsersService.findByIdentifierWithPassword.mockResolvedValue(
         unverifiedUser,
       );
 
       try {
         await service.login(loginDto);
-        fail('Should have thrown');
+        throw new Error('Should have thrown');
       } catch (error: any) {
         // Should get VERIFY_EMAIL_REQUIRED, not "wrong password"
         const response = error.getResponse();
@@ -287,7 +366,7 @@ describe('AuthService', () => {
     });
 
     it('should return 2FA temp token if 2FA is enabled', async () => {
-      mockUsersService.findByEmailWithPassword.mockResolvedValue(mockUser);
+      mockUsersService.findByIdentifierWithPassword.mockResolvedValue(mockUser);
       mockPrismaService.twoFactorAuth.findUnique.mockResolvedValue({
         isEnabled: true,
       });
@@ -295,14 +374,18 @@ describe('AuthService', () => {
 
       const result = await service.login(loginDto);
 
-      expect(result.requires2FA).toBe(true);
-      expect(result.tempToken).toBe('temp-2fa-token');
+      if ('requires2FA' in result) {
+        expect(result.requires2FA).toBe(true);
+        expect(result.tempToken).toBe('temp-2fa-token');
+      } else {
+        throw new Error('Result should contain requires2FA');
+      }
       // Should NOT create a session yet (only after 2FA verification)
       expect(mockTokenService.createSessionForUser).not.toHaveBeenCalled();
     });
 
     it('should log failed login attempt', async () => {
-      mockUsersService.findByEmailWithPassword.mockResolvedValue(null);
+      mockUsersService.findByIdentifierWithPassword.mockResolvedValue(null);
 
       try {
         await service.login(loginDto);
@@ -310,58 +393,58 @@ describe('AuthService', () => {
         // Expected
       }
 
-      expect(mockPrismaService.authLog.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
+      expect(mockAuthAuditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
           action: 'LOGIN_FAILED',
           status: 'FAILED',
         }),
-      });
+      );
     });
 
     it('should log successful login', async () => {
-      mockUsersService.findByEmailWithPassword.mockResolvedValue(mockUser);
+      mockUsersService.findByIdentifierWithPassword.mockResolvedValue(mockUser);
       mockPrismaService.twoFactorAuth.findUnique.mockResolvedValue(null);
 
       await service.login(loginDto);
 
-      expect(mockPrismaService.authLog.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
+      expect(mockAuthAuditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
           action: 'LOGIN_SUCCESS',
           status: 'SUCCESS',
         }),
-      });
+      );
     });
   });
 
   // ==========================================
-  // verifyEmailOtp
+  // verifyOtp
   // ==========================================
-  describe('verifyEmailOtp', () => {
+  describe('verifyOtp', () => {
     it('should verify OTP, mark user as verified, and create session', async () => {
       mockOtpService.verifyOtp.mockResolvedValue(true);
-      mockUsersService.findByEmail.mockResolvedValue(mockUser);
-      mockUsersService.markEmailVerified.mockResolvedValue({
+      mockUsersService.findByIdentifier.mockResolvedValue(mockUser);
+      mockUsersService.markIdentifierVerified.mockResolvedValue({
         ...mockUser,
         isVerified: true,
       });
 
-      const result = await service.verifyEmailOtp({
-        email: 'test@test.com',
+      const result = await service.verifyOtp({
+        identifier: 'test@test.com',
         otp: '123456',
       });
 
       expect(result).toHaveProperty('access_token');
-      expect(mockUsersService.markEmailVerified).toHaveBeenCalledWith(
+      expect(mockUsersService.markIdentifierVerified).toHaveBeenCalledWith(
         'test@test.com',
       );
     });
 
     it('should throw if user does not exist', async () => {
       mockOtpService.verifyOtp.mockResolvedValue(true);
-      mockUsersService.findByEmail.mockResolvedValue(null);
+      mockUsersService.findByIdentifier.mockResolvedValue(null);
 
       await expect(
-        service.verifyEmailOtp({ email: 'ghost@test.com', otp: '123456' }),
+        service.verifyOtp({ identifier: 'ghost@test.com', otp: '123456' }),
       ).rejects.toThrow(BadRequestException);
     });
   });
@@ -374,6 +457,7 @@ describe('AuthService', () => {
       mockTokenService.verifyTemp2FAToken.mockReturnValue('user-uuid-1');
       mockTwoFactorService.verifyCode.mockResolvedValue(true);
       mockUsersService.findById.mockResolvedValue(mockUser);
+      mockUsersService.findByIdentifier.mockResolvedValue(mockUser);
 
       const result = await service.verify2FALogin('temp-token', '123456', {
         ipAddress: '127.0.0.1',
@@ -395,14 +479,15 @@ describe('AuthService', () => {
       mockTokenService.verifyTemp2FAToken.mockReturnValue('user-uuid-1');
       mockTwoFactorService.verifyCode.mockResolvedValue(true);
       mockUsersService.findById.mockResolvedValue(mockUser);
+      mockUsersService.findByIdentifier.mockResolvedValue(mockUser);
 
       await service.verify2FALogin('temp-token', '123456', {});
 
-      expect(mockPrismaService.authLog.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
+      expect(mockAuthAuditService.log).toHaveBeenCalledWith(
+        expect.objectContaining({
           action: 'LOGIN_SUCCESS_2FA',
         }),
-      });
+      );
     });
   });
 
@@ -411,32 +496,32 @@ describe('AuthService', () => {
   // ==========================================
   describe('resendOtp', () => {
     it('should return generic message for existing unverified user', async () => {
-      mockUsersService.findByEmail.mockResolvedValue({
+      mockUsersService.findByIdentifier.mockResolvedValue({
         ...mockUser,
         isVerified: false,
       });
 
       const result = await service.resendOtp('test@test.com');
 
-      expect(result.message).toContain('Nếu email hợp lệ');
+      expect(result.message).toEqual(AUTH_MESSAGES.OTP_SENT_GENERIC);
       expect(mockOtpService.generateAndSendOtp).toHaveBeenCalled();
     });
 
     it('should return SAME generic message for non-existent user (anti-enumeration)', async () => {
-      mockUsersService.findByEmail.mockResolvedValue(null);
+      mockUsersService.findByIdentifier.mockResolvedValue(null);
 
       const result = await service.resendOtp('nonexistent@test.com');
 
-      expect(result.message).toContain('Nếu email hợp lệ');
+      expect(result.message).toEqual(AUTH_MESSAGES.OTP_SENT_GENERIC);
       expect(mockOtpService.generateAndSendOtp).not.toHaveBeenCalled();
     });
 
     it('should return SAME generic message for already verified user', async () => {
-      mockUsersService.findByEmail.mockResolvedValue(mockUser); // isVerified = true
+      mockUsersService.findByIdentifier.mockResolvedValue(mockUser); // isVerified = true
 
       const result = await service.resendOtp('test@test.com');
 
-      expect(result.message).toContain('Nếu email hợp lệ');
+      expect(result.message).toEqual(AUTH_MESSAGES.OTP_SENT_GENERIC);
       expect(mockOtpService.generateAndSendOtp).not.toHaveBeenCalled();
     });
 

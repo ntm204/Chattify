@@ -3,6 +3,7 @@ import { BadRequestException } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { OtpService } from './otp.service';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
+import { AUTH_MESSAGES } from '../../../core/config/auth.messages';
 
 const hashOtp = (otp: string) => createHash('sha256').update(otp).digest('hex');
 
@@ -13,6 +14,8 @@ const mockRedisClient = {
   incr: jest.fn(),
   expire: jest.fn(),
   ttl: jest.fn(),
+  del: jest.fn(),
+  getdel: jest.fn(),
 };
 
 const mockRedisService = {
@@ -27,15 +30,24 @@ const mockMailService = {
   sendPasswordResetOtpEmail: jest.fn().mockResolvedValue(undefined),
 };
 
+const mockSmsService = {
+  sendOtp: jest.fn().mockResolvedValue(undefined),
+};
+
 describe('OtpService', () => {
   let service: OtpService;
 
   beforeEach(() => {
-    service = new OtpService(mockMailService as any, mockRedisService as any);
+    service = new OtpService(
+      mockMailService as any,
+      mockSmsService as any,
+      mockRedisService as any,
+    );
     jest.clearAllMocks();
     mockRedisService.getClient.mockReturnValue(mockRedisClient);
     mockMailService.sendOtpEmail.mockResolvedValue(undefined);
     mockMailService.sendPasswordResetOtpEmail.mockResolvedValue(undefined);
+    mockSmsService.sendOtp.mockResolvedValue(undefined);
   });
 
   // ==========================================
@@ -48,7 +60,7 @@ describe('OtpService', () => {
 
       const result = await service.generateAndSendOtp('test@test.com');
 
-      expect(result.message).toContain('OTP');
+      expect(result.message).toEqual(AUTH_MESSAGES.OTP_SENT_GENERIC);
       expect(mockMailService.sendOtpEmail).toHaveBeenCalledWith(
         'test@test.com',
         expect.any(String),
@@ -72,7 +84,7 @@ describe('OtpService', () => {
       await service.generateAndSendOtp('test@test.com');
 
       expect(mockRedisService.setCache).toHaveBeenCalledWith(
-        expect.stringContaining('otp:EMAIL_VERIFICATION:test@test.com'),
+        expect.stringContaining('otp:VERIFICATION:test@test.com'),
         expect.any(String),
         AUTH_CONSTANTS.OTP_TTL_SECONDS,
       );
@@ -125,7 +137,7 @@ describe('OtpService', () => {
 
       // Verify Redis state was reverted (OTP and cooldown deleted)
       expect(mockRedisService.deleteCache).toHaveBeenCalledWith(
-        expect.stringContaining('otp:EMAIL_VERIFICATION:'),
+        expect.stringContaining('otp:VERIFICATION:'),
       );
       expect(mockRedisService.deleteCache).toHaveBeenCalledWith(
         expect.stringContaining('otp_cooldown:'),
@@ -161,12 +173,18 @@ describe('OtpService', () => {
   describe('verifyOtp', () => {
     it('should verify OTP successfully', async () => {
       mockRedisService.getCache.mockResolvedValue(hashOtp('123456'));
+      mockRedisClient.del.mockResolvedValue(1);
 
       const result = await service.verifyOtp('test@test.com', '123456');
 
       expect(result).toBe(true);
       // Should delete OTP and attempts after success
-      expect(mockRedisService.deleteCache).toHaveBeenCalledTimes(2);
+      expect(mockRedisClient.del).toHaveBeenCalledWith(
+        expect.stringContaining('otp:VERIFICATION:'),
+      );
+      expect(mockRedisService.deleteCache).toHaveBeenCalledWith(
+        expect.stringContaining('otp_attempts:'),
+      );
     });
 
     it('should throw if OTP expired (not found in Redis)', async () => {
@@ -199,12 +217,11 @@ describe('OtpService', () => {
         service.verifyOtp('test@test.com', 'wrong1'),
       ).rejects.toThrow(BadRequestException);
 
-      // Both OTP and attempts counter should be deleted
-      expect(mockRedisService.deleteCache).toHaveBeenCalledWith(
-        expect.stringContaining('otp:EMAIL_VERIFICATION:'),
-      );
-      expect(mockRedisService.deleteCache).toHaveBeenCalledWith(
+      // Attempt counter should be updated
+      expect(mockRedisService.setCache).toHaveBeenCalledWith(
         expect.stringContaining('otp_attempts:'),
+        expect.any(String),
+        expect.any(Number),
       );
     });
 
@@ -226,6 +243,7 @@ describe('OtpService', () => {
 
     it('should work with PASSWORD_RESET type', async () => {
       mockRedisService.getCache.mockResolvedValue(hashOtp('654321'));
+      mockRedisClient.del.mockResolvedValue(1);
 
       const result = await service.verifyOtp(
         'test@test.com',

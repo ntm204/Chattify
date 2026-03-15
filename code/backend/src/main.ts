@@ -4,19 +4,27 @@ import { ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import * as express from 'express';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  const configService = app.get(ConfigService);
 
-  // Security Headers
+  app.setGlobalPrefix('api/v1');
+
+  if (configService.get<string>('NODE_ENV') === 'production') {
+    const expressApp = app
+      .getHttpAdapter()
+      .getInstance() as express.Application;
+    expressApp.set('trust proxy', 1);
+  }
+
   app.use(helmet());
-
-  // Cookie Support
   app.use(cookieParser());
 
-  // Global Validation
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -25,43 +33,32 @@ async function bootstrap() {
     }),
   );
 
-  // Global Exception Filter
+  app.useGlobalInterceptors(new TransformInterceptor());
   app.useGlobalFilters(new AllExceptionsFilter());
 
-  // Configuration
-  const configService = app.get(ConfigService);
-
-  // Swagger API Documentation (disabled in production)
   if (configService.get<string>('NODE_ENV') !== 'production') {
     const config = new DocumentBuilder()
       .setTitle('Chatiffy API')
-      .setDescription(
-        'The Enterprise Chatiffy Backend API Documentation. All Auth concepts are highly secured.',
-      )
       .setVersion('1.0')
       .addBearerAuth()
       .build();
-    const documentFactory = () => SwaggerModule.createDocument(app, config);
-    SwaggerModule.setup('api/docs', app, documentFactory);
+    SwaggerModule.setup(
+      'api/docs',
+      app,
+      SwaggerModule.createDocument(app, config),
+    );
   }
 
-  // CORS Configuration
-  const corsOrigins = configService
-    .get<string>('CORS_ORIGIN', 'http://localhost:3000,http://localhost:3001')
-    .split(',')
-    .map((o) => o.trim());
   app.enableCors({
-    origin: corsOrigins,
+    origin: configService
+      .get<string>('CORS_ORIGIN', '')
+      .split(',')
+      .map((o: string) => o.trim()),
     credentials: true,
   });
 
-  const port = configService.get<number>('PORT', 3000);
+  const port = configService.get<number>('PORT', 3000) || 3000;
   await app.listen(port);
-  console.log(`🚀 Application is running on: http://localhost:${port}`);
-  if (configService.get<string>('NODE_ENV') !== 'production') {
-    console.log(
-      `→ Swagger Documentation available at: http://localhost:${port}/api/docs`,
-    );
-  }
+  console.log(`🚀 v1 running on: http://localhost:${port}/api/v1`);
 }
 void bootstrap();

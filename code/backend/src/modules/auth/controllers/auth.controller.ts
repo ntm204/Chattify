@@ -2,8 +2,6 @@ import {
   Controller,
   Post,
   Body,
-  HttpCode,
-  HttpStatus,
   UseGuards,
   Get,
   Delete,
@@ -13,13 +11,13 @@ import {
   Ip,
   UnauthorizedException,
 } from '@nestjs/common';
-import * as express from 'express';
-import type { AuthenticatedRequest } from '../../../common/interfaces/authenticated-request.interface';
+import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
-import { JwtAuthGuard } from '../guards/jwt-auth.guard';
+import * as express from 'express';
 import { AuthService } from '../services/auth.service';
 import { PasswordService } from '../services/password.service';
 import { TwoFactorService } from '../services/two-factor.service';
+import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { RegisterDto } from '../dto/register.dto';
 import { LoginDto } from '../dto/login.dto';
 import { VerifyOtpDto } from '../dto/verify-otp.dto';
@@ -29,38 +27,51 @@ import { ResetPasswordDto } from '../dto/reset-password.dto';
 import { ChangePasswordDto } from '../dto/change-password.dto';
 import { Verify2FADto } from '../dto/verify-2fa.dto';
 import { Toggle2FACodeDto } from '../dto/toggle-2fa-code.dto';
+import { SendPhoneOtpDto, VerifyPhoneOtpDto } from '../dto/phone-auth.dto';
+import {
+  RequestChangeEmailDto,
+  VerifyChangeEmailDto,
+  RequestChangePhoneDto,
+  VerifyChangePhoneDto,
+} from '../../users/dto/change-identifier.dto';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
 import { AUTH_MESSAGES } from '../../../core/config/auth.messages';
+import { AuthenticatedRequest } from '../../../common/interfaces/authenticated-request.interface';
+import { AuthRequestContext } from '../domain/types/auth-context.type';
+import { AuthAuditService } from '../services/auth-audit.service';
+import {
+  AUTH_EVENT_ACTIONS,
+  AUTH_EVENT_STATUS,
+} from '../constants/auth-events.constants';
 
-@Controller('api/v1/auth')
+@Controller('auth')
 export class AuthController {
+  private readonly cookieOptions: express.CookieOptions;
+
   constructor(
     private readonly authService: AuthService,
     private readonly passwordService: PasswordService,
     private readonly twoFactorService: TwoFactorService,
-  ) {}
-
-  private readonly cookieOptions = {
-    httpOnly: true,
-    secure: process.env.NODE_ENV !== 'development',
-    sameSite: 'strict' as const,
-    path: '/',
-  };
-
-  private setAuthCookies(
-    res: express.Response,
-    access_token: string,
-    refresh_token: string,
+    private readonly configService: ConfigService,
+    private readonly authAuditService: AuthAuditService,
   ) {
-    res.cookie('access_token', access_token, {
+    this.cookieOptions = {
+      httpOnly: true,
+      secure: this.configService.get<string>('NODE_ENV') !== 'development',
+      sameSite: 'lax',
+      path: '/',
+    };
+  }
+
+  private setCookies(res: express.Response, at: string, rt: string) {
+    res.cookie('access_token', at, {
       ...this.cookieOptions,
       maxAge: AUTH_CONSTANTS.COOKIE_ACCESS_TOKEN_MAX_AGE,
     });
-
-    // Restrict Refresh Token to auth path
-    res.cookie('refresh_token', refresh_token, {
+    res.cookie('refresh_token', rt, {
       ...this.cookieOptions,
       path: '/api/v1/auth',
+      sameSite: 'strict', // Stricter for refresh token
       maxAge: AUTH_CONSTANTS.COOKIE_REFRESH_TOKEN_MAX_AGE,
     });
   }
@@ -70,226 +81,322 @@ export class AuthController {
     res.clearCookie('refresh_token', {
       ...this.cookieOptions,
       path: '/api/v1/auth',
+      sameSite: 'strict',
     });
+  }
+
+  private extractRequestContext(
+    ipAddress: string,
+    req: express.Request,
+  ): AuthRequestContext {
+    return {
+      ipAddress,
+      deviceInfo: (req.headers['user-agent'] as string) || 'Unknown',
+    };
+  }
+
+  private getAuthenticatedUser(req: express.Request) {
+    return (req as AuthenticatedRequest).user;
   }
 
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   @Post('register')
-  async register(@Body() registerDto: RegisterDto) {
-    return this.authService.register(registerDto);
+  register(@Body() dto: RegisterDto) {
+    return this.authService.register(dto);
   }
 
-  @Throttle({ default: { limit: 3, ttl: 60000 } }) // Rate limit: 3 requests / minute
-  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 3, ttl: 60000 } })
   @Post('resend-otp')
-  async resendOtp(@Body() dto: ResendOtpDto) {
-    return this.authService.resendOtp(dto.email);
+  resendOtp(@Body() { identifier }: ResendOtpDto) {
+    return this.authService.resendOtp(identifier);
   }
 
   @Throttle({ default: { limit: 5, ttl: 60000 } })
-  @HttpCode(HttpStatus.OK)
-  @Post('verify-email')
-  async verifyEmail(
-    @Body() verifyOtpDto: VerifyOtpDto,
+  @Post('verify-otp')
+  async verifyOtp(
+    @Body() dto: VerifyOtpDto,
     @Ip() ipAddress: string,
     @Req() req: express.Request,
     @Res({ passthrough: true }) res: express.Response,
   ) {
-    const deviceInfo = req.headers['user-agent'] || 'Unknown Device';
-    const result = await this.authService.verifyEmailOtp({
-      ...verifyOtpDto,
-      ipAddress,
-      deviceInfo,
+    const result = await this.authService.verifyOtp({
+      ...dto,
+      ...this.extractRequestContext(ipAddress, req),
     });
-    this.setAuthCookies(
-      res,
-      result.access_token as string,
-      result.refresh_token as string,
-    );
+    this.setCookies(res, result.access_token, result.refresh_token);
     return { message: AUTH_MESSAGES.VERIFY_EMAIL_SUCCESS, user: result.user };
   }
 
-  @Throttle({ default: { limit: 10, ttl: 60000 } })
-  @HttpCode(HttpStatus.OK)
-  @Post('login')
-  async login(
-    @Body() loginDto: LoginDto,
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @Post('verify-email')
+  async verifyEmail(
+    @Body() dto: VerifyOtpDto,
     @Ip() ipAddress: string,
     @Req() req: express.Request,
     @Res({ passthrough: true }) res: express.Response,
   ) {
-    const deviceInfo = req.headers['user-agent'] || 'Unknown Device';
-    const result = await this.authService.login({
-      ...loginDto,
-      ipAddress,
-      deviceInfo,
-    });
-
-    // Return tempToken if 2FA is required, do not set cookies yet
-    if (result.requires2FA) {
-      return {
-        requires2FA: true,
-        message: result.message,
-        tempToken: result.tempToken,
-      };
-    }
-
-    this.setAuthCookies(
-      res,
-      result.access_token as string,
-      result.refresh_token as string,
-    );
-    return { message: AUTH_MESSAGES.LOGIN_SUCCESS, user: result.user };
+    return this.verifyOtp(dto, ipAddress, req, res);
   }
 
   @Throttle({ default: { limit: 10, ttl: 60000 } })
-  @HttpCode(HttpStatus.OK)
-  @Post('refresh')
-  async refreshTokens(
+  @Post('login')
+  async login(
+    @Body() dto: LoginDto,
+    @Ip() ipAddress: string,
     @Req() req: express.Request,
     @Res({ passthrough: true }) res: express.Response,
   ) {
-    const refreshToken = req.cookies['refresh_token'] as string | undefined;
-    if (!refreshToken) {
+    const context = this.extractRequestContext(ipAddress, req);
+    const result = await this.authService.login({
+      ...dto,
+      ...context,
+    });
+    if ('requires2FA' in result) return result;
+    this.setCookies(res, result.access_token, result.refresh_token);
+    return { message: AUTH_MESSAGES.LOGIN_SUCCESS, user: result.user };
+  }
+
+  @Throttle({ default: { limit: 3, ttl: 60000 } })
+  @Post('phone/send-otp')
+  sendPhoneOtp(@Body() dto: SendPhoneOtpDto) {
+    return this.authService.sendPhoneOtp(dto);
+  }
+
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @Post('phone/login')
+  async loginPhone(
+    @Body() dto: VerifyPhoneOtpDto,
+    @Ip() ipAddress: string,
+    @Req() req: express.Request,
+    @Res({ passthrough: true }) res: express.Response,
+  ) {
+    const result = await this.authService.loginWithPhoneOtp({
+      ...dto,
+      ...this.extractRequestContext(ipAddress, req),
+    });
+    this.setCookies(res, result.access_token, result.refresh_token);
+    return result;
+  }
+
+  @Throttle({ default: { limit: 20, ttl: 60000 } })
+  @Post('refresh')
+  async refresh(
+    @Req() req: express.Request,
+    @Ip() ipAddress: string,
+    @Res({ passthrough: true }) res: express.Response,
+  ) {
+    const rt = req.cookies['refresh_token'] as string;
+    if (!rt)
       throw new UnauthorizedException(AUTH_MESSAGES.REFRESH_TOKEN_NOT_FOUND);
-    }
-    const result = await this.authService.refreshTokens(refreshToken);
-    this.setAuthCookies(
-      res,
-      result.access_token as string,
-      result.refresh_token as string,
+
+    const { deviceInfo } = this.extractRequestContext(ipAddress, req);
+    const result = await this.authService.refreshTokens(
+      rt,
+      ipAddress,
+      deviceInfo,
     );
+    this.setCookies(res, result.access_token, result.refresh_token);
     return { message: AUTH_MESSAGES.REFRESH_TOKEN_SUCCESS };
   }
 
   @UseGuards(JwtAuthGuard)
-  @HttpCode(HttpStatus.OK)
   @Post('logout')
   async logout(
-    @Req() req: AuthenticatedRequest,
+    @Req() req: express.Request,
+    @Ip() ipAddress: string,
     @Res({ passthrough: true }) res: express.Response,
   ) {
-    if (req.user.currentSessionId) {
-      await this.authService.revokeSession(
-        req.user.id,
-        req.user.currentSessionId,
-      );
-    }
+    const user = this.getAuthenticatedUser(req);
+    if (user.currentSessionId)
+      await this.authService.revokeSession(user.id, user.currentSessionId);
     this.clearAuthCookies(res);
+
+    void this.authAuditService
+      .log({
+        userId: user.id,
+        action: AUTH_EVENT_ACTIONS.LOGOUT,
+        status: AUTH_EVENT_STATUS.SUCCESS,
+        ipAddress,
+        deviceInfo: (req.headers['user-agent'] as string) || 'Unknown',
+      })
+      .catch(() => {});
+
     return { message: AUTH_MESSAGES.LOGOUT_SUCCESS };
   }
 
   @UseGuards(JwtAuthGuard)
   @Get('sessions')
-  async getSessions(@Req() req: AuthenticatedRequest) {
-    return this.authService.getSessions(req.user.id);
+  getSessions(@Req() req: express.Request) {
+    const user = this.getAuthenticatedUser(req);
+    return this.authService.getSessions(user.id);
   }
 
   @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Delete('sessions/:id')
-  async revokeSession(
-    @Req() req: AuthenticatedRequest,
-    @Param('id') sessionId: string,
-  ) {
-    return this.authService.revokeSession(req.user.id, sessionId);
+  async revokeSession(@Req() req: express.Request, @Param('id') sId: string) {
+    const user = this.getAuthenticatedUser(req);
+    const result = await this.authService.revokeSession(user.id, sId);
+
+    void this.authAuditService
+      .log({
+        userId: user.id,
+        action: AUTH_EVENT_ACTIONS.SESSION_REVOKED,
+        status: AUTH_EVENT_STATUS.SUCCESS,
+      })
+      .catch(() => {});
+
+    return result;
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Post('sessions/revoke-all')
+  async revokeAll(
+    @Req() req: express.Request,
+    @Res({ passthrough: true }) res: express.Response,
+  ) {
+    const user = this.getAuthenticatedUser(req);
+    await this.authService.revokeAllSessions(user.id);
+    this.clearAuthCookies(res);
+    return { message: 'Logged out from all devices' };
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Throttle({ default: { limit: 3, ttl: 60000 } })
   @Post('2fa/generate')
-  @UseGuards(JwtAuthGuard)
-  async generate2FA(@Req() req: AuthenticatedRequest) {
+  gen2FA(@Req() req: express.Request) {
+    const user = this.getAuthenticatedUser(req);
     return this.twoFactorService.generateTwoFactorAuthSecret(
-      req.user.id,
-      req.user.email,
+      user.id,
+      user.email || '',
     );
   }
 
-  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @UseGuards(JwtAuthGuard)
   @Post('2fa/turn-on')
-  @UseGuards(JwtAuthGuard)
-  async turnOn2FA(
-    @Req() req: AuthenticatedRequest,
-    @Body() dto: Toggle2FACodeDto,
-  ) {
-    return this.twoFactorService.turnOnTwoFactorAuth(req.user.id, dto.code);
+  async turnOn2FA(@Req() req: express.Request, @Body() { code }: Toggle2FACodeDto) {
+    const user = this.getAuthenticatedUser(req);
+    const result = await this.twoFactorService.turnOnTwoFactorAuth(user.id, code);
+
+    void this.authAuditService
+      .log({
+        userId: user.id,
+        action: AUTH_EVENT_ACTIONS.TWO_FA_ENABLED,
+        status: AUTH_EVENT_STATUS.SUCCESS,
+      })
+      .catch(() => {});
+
+    return result;
   }
 
-  @Throttle({ default: { limit: 3, ttl: 60000 } })
-  @Post('2fa/turn-off')
   @UseGuards(JwtAuthGuard)
-  async turnOff2FA(
-    @Req() req: AuthenticatedRequest,
-    @Body() dto: Toggle2FACodeDto,
-  ) {
-    return this.twoFactorService.turnOffTwoFactorAuth(req.user.id, dto.code);
+  @Post('2fa/turn-off')
+  async turnOff2FA(@Req() req: express.Request, @Body() { code }: Toggle2FACodeDto) {
+    const user = this.getAuthenticatedUser(req);
+    const result = await this.twoFactorService.turnOffTwoFactorAuth(user.id, code);
+
+    void this.authAuditService
+      .log({
+        userId: user.id,
+        action: AUTH_EVENT_ACTIONS.TWO_FA_DISABLED,
+        status: AUTH_EVENT_STATUS.SUCCESS,
+      })
+      .catch(() => {});
+
+    return result;
   }
 
   @Throttle({ default: { limit: 5, ttl: 60000 } })
-  @HttpCode(HttpStatus.OK)
   @Post('2fa/verify')
-  async verify2FALogin(
-    @Body() body: Verify2FADto,
+  async verify2FA(
+    @Body() dto: Verify2FADto,
     @Ip() ipAddress: string,
     @Req() req: express.Request,
     @Res({ passthrough: true }) res: express.Response,
   ) {
-    const deviceInfo = req.headers['user-agent'] || 'Unknown Device';
     const result = await this.authService.verify2FALogin(
-      body.tempToken,
-      body.code,
-      { ipAddress, deviceInfo },
+      dto.tempToken,
+      dto.code,
+      this.extractRequestContext(ipAddress, req),
     );
-    this.setAuthCookies(
-      res,
-      result.access_token as string,
-      result.refresh_token as string,
-    );
+    this.setCookies(res, result.access_token, result.refresh_token);
     return { message: AUTH_MESSAGES.LOGIN_SUCCESS, user: result.user };
   }
 
-  // ==========================================
-  // Password Management
-  // ==========================================
-
   @Throttle({ default: { limit: 3, ttl: 60000 } })
-  @HttpCode(HttpStatus.OK)
   @Post('forgot-password')
-  async forgotPassword(@Body() forgotPwDto: ForgotPasswordDto) {
-    return this.passwordService.forgotPassword(forgotPwDto);
+  forgotPw(@Body() dto: ForgotPasswordDto) {
+    return this.passwordService.forgotPassword(dto);
   }
 
   @Throttle({ default: { limit: 5, ttl: 60000 } })
-  @HttpCode(HttpStatus.OK)
   @Post('reset-password')
-  async resetPassword(
-    @Body() resetPwDto: ResetPasswordDto,
+  resetPw(
+    @Body() dto: ResetPasswordDto,
     @Ip() ipAddress: string,
     @Req() req: express.Request,
   ) {
-    const deviceInfo = req.headers['user-agent'] || 'Unknown Device';
-    return this.passwordService.resetPassword(resetPwDto, {
-      ipAddress,
-      deviceInfo,
+    return this.passwordService.resetPassword(dto, {
+      ...this.extractRequestContext(ipAddress, req),
     });
   }
 
-  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @UseGuards(JwtAuthGuard)
-  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   @Post('change-password')
-  async changePassword(
-    @Req() req: AuthenticatedRequest,
-    @Body() changePasswordDto: ChangePasswordDto,
+  async changePw(
+    @Req() req: express.Request,
+    @Body() dto: ChangePasswordDto,
     @Ip() ipAddress: string,
     @Res({ passthrough: true }) res: express.Response,
   ) {
-    const deviceInfo = req.headers['user-agent'] || 'Unknown Device';
-    const result = await this.passwordService.changePassword(
-      req.user.id,
-      changePasswordDto,
-      { ipAddress, deviceInfo },
-    );
+    const user = this.getAuthenticatedUser(req);
+    const result = await this.passwordService.changePassword(user.id, dto, {
+      ...this.extractRequestContext(ipAddress, req),
+    });
     this.clearAuthCookies(res);
     return result;
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 3, ttl: 60000 } })
+  @Post('change-email/request')
+  reqEmail(
+    @Req() req: express.Request,
+    @Body() { newEmail }: RequestChangeEmailDto,
+  ) {
+    const user = this.getAuthenticatedUser(req);
+    return this.authService.requestChangeEmail(user.id, newEmail);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('change-email/verify')
+  verEmail(
+    @Req() req: express.Request,
+    @Body() { email, otp }: VerifyChangeEmailDto,
+  ) {
+    const user = this.getAuthenticatedUser(req);
+    return this.authService.verifyChangeEmail(user.id, email, otp);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 3, ttl: 60000 } })
+  @Post('change-phone/request')
+  reqPhone(
+    @Req() req: express.Request,
+    @Body() { newPhone }: RequestChangePhoneDto,
+  ) {
+    const user = this.getAuthenticatedUser(req);
+    return this.authService.requestChangePhone(user.id, newPhone);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('change-phone/verify')
+  verPhone(
+    @Req() req: express.Request,
+    @Body() { phone, otp }: VerifyChangePhoneDto,
+  ) {
+    const user = this.getAuthenticatedUser(req);
+    return this.authService.verifyChangePhone(user.id, phone, otp);
   }
 }

@@ -13,6 +13,7 @@ import { AUTH_MESSAGES } from '../../../core/config/auth.messages';
 import {
   createCipheriv,
   createDecipheriv,
+  createHash,
   randomBytes,
   scryptSync,
 } from 'crypto';
@@ -171,34 +172,76 @@ export class TwoFactorService {
 
     await this.check2FABruteForce(userId, isCodeValid);
 
-    await this.prisma.twoFactorAuth.update({
-      where: { userId },
-      data: { isEnabled: enable },
-    });
+    let rawRecoveryCodes: string[] = [];
+    if (enable) {
+      rawRecoveryCodes = Array.from({ length: 8 }, () =>
+        randomBytes(4).toString('hex').toUpperCase(),
+      );
+      const hashedCodes = rawRecoveryCodes.map((c) =>
+        createHash('sha256').update(c).digest('hex'),
+      );
+
+      await this.prisma.twoFactorAuth.update({
+        where: { userId },
+        data: { isEnabled: enable, recoveryCodes: hashedCodes },
+      });
+    } else {
+      await this.prisma.twoFactorAuth.update({
+        where: { userId },
+        data: { isEnabled: enable, recoveryCodes: [] },
+      });
+    }
 
     return {
       message: enable
-        ? 'Xác minh và Bật 2FA thành công!'
-        : 'Đã tắt 2FA thành công!',
+        ? AUTH_MESSAGES.TFA_ENABLE_SUCCESS
+        : AUTH_MESSAGES.TFA_DISABLE_SUCCESS,
+      ...(enable ? { recoveryCodes: rawRecoveryCodes } : {}),
     };
   }
 
   async verifyCode(userId: string, code: string, isEnabling: boolean = false) {
+    const normalizedCode = code.trim().toUpperCase();
+
     const twoFactor = await this.prisma.twoFactorAuth.findUnique({
       where: { userId },
     });
 
     if (!twoFactor) return false;
     if (!isEnabling && !twoFactor.isEnabled) return false;
+
+    // Support 8-char Alphanumeric Recovery Codes
+    if (normalizedCode.length === 8) {
+      const hashedCode = createHash('sha256')
+        .update(normalizedCode)
+        .digest('hex');
+      const validCodeIndex = twoFactor.recoveryCodes.indexOf(hashedCode);
+
+      if (validCodeIndex !== -1) {
+        // Code is valid, consume it (single-use)
+        const updatedCodes = [...twoFactor.recoveryCodes];
+        updatedCodes.splice(validCodeIndex, 1);
+
+        await this.prisma.twoFactorAuth.update({
+          where: { userId },
+          data: { recoveryCodes: updatedCodes },
+        });
+
+        // Pass brute force check since code is valid
+        await this.check2FABruteForce(userId, true);
+        return true;
+      }
+    }
+
     const decryptedSecret = this.decryptSecret(twoFactor.secret);
     const isCodeValid = speakeasy.totp.verify({
       secret: decryptedSecret,
       encoding: 'base32',
-      token: code,
+      token: code.trim(),
     });
 
     await this.check2FABruteForce(userId, isCodeValid);
 
-    return true;
+    return isCodeValid;
   }
 }

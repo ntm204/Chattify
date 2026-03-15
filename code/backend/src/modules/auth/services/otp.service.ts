@@ -1,9 +1,16 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { MailService } from '../../../core/mail/mail.service';
+import { SmsService } from '../../../core/sms/sms.service';
 import { randomInt, createHash } from 'crypto';
 import { RedisService } from '../../../core/redis/redis.service';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
 import { AUTH_MESSAGES } from '../../../core/config/auth.messages';
+import { AuthUtils } from '../../../core/utils/auth.util';
+import { LogUtils } from '../../../core/utils/log.util';
+import {
+  OtpPurpose,
+  OTP_PURPOSE,
+} from '../domain/constants/otp-purpose.constants';
 
 @Injectable()
 export class OtpService {
@@ -11,15 +18,28 @@ export class OtpService {
 
   constructor(
     private readonly mailService: MailService,
+    private readonly smsService: SmsService,
     private readonly redisService: RedisService,
   ) {}
 
-  async generateAndSendOtp(email: string, type: string = 'EMAIL_VERIFICATION') {
-    const redisKey = `otp:${type}:${email}`;
-    const cooldownKey = `otp_cooldown:${type}:${email}`;
-    const attemptsKey = `otp_attempts:${type}:${email}`;
+  async generateAndSendOtp(
+    identifier: string,
+    type: OtpPurpose = OTP_PURPOSE.VERIFICATION,
+  ) {
+    const normalizedIdentifier = AuthUtils.normalizeIdentifier(identifier);
+    const identifierType = AuthUtils.getIdentifierType(normalizedIdentifier);
 
-    // 1. Check cooldown FIRST to prevent racing the daily limits
+    if (identifierType === 'UNKNOWN') {
+      throw new BadRequestException(
+        'Định dạng Email hoặc Số điện thoại không hợp lệ.',
+      );
+    }
+
+    const redisKey = `otp:${type}:${normalizedIdentifier}`;
+    const cooldownKey = `otp_cooldown:${type}:${normalizedIdentifier}`;
+    const attemptsKey = `otp_attempts:${type}:${normalizedIdentifier}`;
+
+    // 1. Check cooldown FIRST
     const isOnCooldown = await this.redisService.getCache(cooldownKey);
     if (isOnCooldown) {
       const redisClient = this.redisService.getClient();
@@ -27,8 +47,8 @@ export class OtpService {
       throw new BadRequestException(AUTH_MESSAGES.OTP_COOLDOWN(ttl));
     }
 
-    // 2. Increment daily limit AFTER verifying not on cooldown
-    const dailyLimitKey = `otp_daily:${type}:${email}`;
+    // 2. Increment daily limit
+    const dailyLimitKey = `otp_daily:${type}:${normalizedIdentifier}`;
     const redisClient = this.redisService.getClient();
     const dailyCount = await redisClient.incr(dailyLimitKey);
     if (dailyCount === 1) {
@@ -55,20 +75,28 @@ export class OtpService {
     await this.redisService.deleteCache(attemptsKey);
 
     try {
-      if (type === 'PASSWORD_RESET') {
-        await this.mailService.sendPasswordResetOtpEmail(email, otp);
+      if (identifierType === 'EMAIL') {
+        if (type === 'PASSWORD_RESET') {
+          await this.mailService.sendPasswordResetOtpEmail(
+            normalizedIdentifier,
+            otp,
+          );
+        } else {
+          await this.mailService.sendOtpEmail(normalizedIdentifier, otp);
+        }
       } else {
-        await this.mailService.sendOtpEmail(email, otp);
+        // PHONE
+        await this.smsService.sendOtp(normalizedIdentifier, otp);
       }
     } catch (error) {
       await this.redisService.deleteCache(redisKey);
       await this.redisService.deleteCache(cooldownKey);
       this.logger.error(
-        `Mail send failed for ${email}`,
+        `OTP send failed for ${LogUtils.maskIdentifier(normalizedIdentifier)}`,
         error instanceof Error ? error.stack : String(error),
       );
       throw new BadRequestException(
-        'Lỗi hệ thống Email. Vui lòng thử lại sau vài phút.',
+        `Lỗi hệ thống gửi mã xác thực. Vui lòng thử lại sau vài phút.`,
       );
     }
 
@@ -76,13 +104,15 @@ export class OtpService {
   }
 
   async verifyOtp(
-    email: string,
+    identifier: string,
     otp: string,
-    type: string = 'EMAIL_VERIFICATION',
+    type: OtpPurpose = OTP_PURPOSE.VERIFICATION,
   ) {
-    const redisKey = `otp:${type}:${email}`;
-    const attemptsKey = `otp_attempts:${type}:${email}`;
+    const normalizedIdentifier = AuthUtils.normalizeIdentifier(identifier);
+    const redisKey = `otp:${type}:${normalizedIdentifier}`;
+    const attemptsKey = `otp_attempts:${type}:${normalizedIdentifier}`;
 
+    // Use GET instead of GETDEL to allow retries on incorrect OTP
     const storedHash = await this.redisService.getCache(redisKey);
 
     if (!storedHash) {
@@ -98,16 +128,30 @@ export class OtpService {
       }
 
       if (attempts >= AUTH_CONSTANTS.OTP_MAX_ATTEMPTS) {
-        await this.redisService.deleteCache(redisKey);
-        await this.redisService.deleteCache(attemptsKey);
+        // If max attempts reached or exceeded, set the attempts key to reflect this and prevent further attempts
+        await this.redisService.setCache(
+          attemptsKey,
+          String(attempts), // Store the current attempt count
+          AUTH_CONSTANTS.OTP_TTL_SECONDS,
+        );
         throw new BadRequestException(AUTH_MESSAGES.OTP_MAX_ATTEMPTS);
       }
 
+      const remaining = AUTH_CONSTANTS.OTP_MAX_ATTEMPTS - attempts;
       throw new BadRequestException(
-        `Mã OTP không chính xác! Bạn còn ${AUTH_CONSTANTS.OTP_MAX_ATTEMPTS - attempts} lần thử.`,
+        `Mã xác thực không chính xác! Bạn còn ${remaining} lần thử.`,
       );
     }
-    await this.redisService.deleteCache(redisKey);
+
+    // OTP verified successfully
+    // Atomic check to prevent race condition (double verify)
+    const redisClient = this.redisService.getClient();
+    const deletedCount = await redisClient.del(redisKey);
+    if (deletedCount === 0) {
+      throw new BadRequestException(AUTH_MESSAGES.OTP_INVALID_OR_EXPIRED);
+    }
+
+    // Clear attempt counter upon success
     await this.redisService.deleteCache(attemptsKey);
 
     return true;

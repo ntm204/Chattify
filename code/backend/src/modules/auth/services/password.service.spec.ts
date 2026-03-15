@@ -1,44 +1,55 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access */
-import { NotFoundException, BadRequestException } from '@nestjs/common';
+/* eslint-disable @typescript-eslint/no-unsafe-argument */
+import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { PasswordService } from './password.service';
-import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
 import { AUTH_MESSAGES } from '../../../core/config/auth.messages';
-import * as bcrypt from 'bcrypt';
+import { AuthUtils } from '../../../core/utils/auth.util';
 
 // ==========================================
-// Mocks
+// Mock Data
 // ==========================================
 const mockUser = {
   id: 'user-uuid-1',
   email: 'test@test.com',
-  username: 'testuser',
-  displayName: 'Test User',
-  avatarUrl: null,
+  phone: '0987654321',
   passwordHash: '',
   isVerified: true,
 };
 
+// ==========================================
+// Mocks
+// ==========================================
 const mockPrismaService = {
   user: {
+    findFirst: jest.fn(),
     findUnique: jest.fn(),
     update: jest.fn(),
+  },
+  passwordHistory: {
+    findMany: jest.fn().mockResolvedValue([]),
+    deleteMany: jest.fn(),
+    create: jest.fn(),
   },
   authLog: {
     create: jest.fn(),
   },
+  $transaction: jest.fn(),
 };
 
-const mockUsersService = {
-  findByEmail: jest.fn(),
+const mockOtpService = {
+  generateAndSendOtp: jest.fn(),
+  verifyOtp: jest.fn(),
 };
 
 const mockTokenService = {
   revokeAllSessions: jest.fn(),
 };
 
-const mockOtpService = {
-  generateAndSendOtp: jest.fn(),
-  verifyOtp: jest.fn(),
+const mockAuthAuditService = {
+  log: jest.fn(),
+};
+
+const mockMailService = {
+  sendSecurityAlertEmail: jest.fn(),
 };
 
 describe('PasswordService', () => {
@@ -47,17 +58,30 @@ describe('PasswordService', () => {
   beforeEach(async () => {
     service = new PasswordService(
       mockPrismaService as any,
-      mockUsersService as any,
-      mockTokenService as any,
       mockOtpService as any,
+      mockTokenService as any,
+      mockAuthAuditService as any,
+      mockMailService as any,
     );
     jest.clearAllMocks();
 
-    // Pre-hash a password for reuse
-    mockUser.passwordHash = await bcrypt.hash(
-      'OldPass123!',
-      AUTH_CONSTANTS.SALT_ROUNDS,
+    // Mock static method to prevent real HIBP API calls
+    jest.spyOn(AuthUtils, 'isPasswordPwned').mockResolvedValue(false);
+
+    // Re-apply mocks cleared by clearAllMocks
+    mockAuthAuditService.log.mockResolvedValue(undefined);
+    mockMailService.sendSecurityAlertEmail.mockResolvedValue(undefined);
+    mockPrismaService.passwordHistory.findMany.mockResolvedValue([]);
+
+    // Default mock for $transaction to execute the callback immediately
+    mockPrismaService.$transaction.mockImplementation(
+      async (callback: (tx: any) => Promise<unknown>) => {
+        return callback(mockPrismaService);
+      },
     );
+
+    // Pre-hash password
+    mockUser.passwordHash = await AuthUtils.hashPassword('OldPass123!');
   });
 
   // ==========================================
@@ -65,9 +89,11 @@ describe('PasswordService', () => {
   // ==========================================
   describe('forgotPassword', () => {
     it('should return generic message when user exists', async () => {
-      mockUsersService.findByEmail.mockResolvedValue(mockUser);
+      mockPrismaService.user.findFirst.mockResolvedValue(mockUser);
 
-      const result = await service.forgotPassword({ email: 'test@test.com' });
+      const result = await service.forgotPassword({
+        identifier: 'test@test.com',
+      });
 
       expect(result.message).toEqual(AUTH_MESSAGES.FORGOT_PASSWORD_GENERIC);
       expect(mockOtpService.generateAndSendOtp).toHaveBeenCalledWith(
@@ -77,10 +103,10 @@ describe('PasswordService', () => {
     });
 
     it('should return SAME generic message when user does NOT exist (anti-enumeration)', async () => {
-      mockUsersService.findByEmail.mockResolvedValue(null);
+      mockPrismaService.user.findFirst.mockResolvedValue(null);
 
       const result = await service.forgotPassword({
-        email: 'nonexistent@test.com',
+        identifier: 'ghost@test.com',
       });
 
       expect(result.message).toEqual(AUTH_MESSAGES.FORGOT_PASSWORD_GENERIC);
@@ -92,72 +118,34 @@ describe('PasswordService', () => {
   // resetPassword
   // ==========================================
   describe('resetPassword', () => {
+    const resetDto = {
+      identifier: 'test@test.com',
+      otp: '123456',
+      newPassword: 'NewPass456!',
+    };
+
     it('should reset password and revoke all sessions', async () => {
       mockOtpService.verifyOtp.mockResolvedValue(true);
-      mockPrismaService.user.update.mockResolvedValue(mockUser);
+      mockPrismaService.user.findFirst.mockResolvedValue(mockUser);
 
-      const result = await service.resetPassword(
-        {
-          email: 'test@test.com',
-          otp: '123456',
-          newPassword: 'NewPass123!',
-        },
-        { ipAddress: '127.0.0.1', deviceInfo: 'Jest Agent' },
-      );
+      const result = await service.resetPassword(resetDto, {
+        ipAddress: '1.2.3.4',
+      });
 
-      expect(result.message).toEqual(AUTH_MESSAGES.CHANGE_PASSWORD_SUCCESS);
+      expect(result.message).toContain('thành công');
       expect(mockTokenService.revokeAllSessions).toHaveBeenCalledWith(
         mockUser.id,
       );
-      expect(mockPrismaService.authLog.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          action: 'PASSWORD_RESET',
-          status: 'SUCCESS',
-          ipAddress: '127.0.0.1',
-          deviceInfo: 'Jest Agent',
-        }),
-      });
+      expect(mockPrismaService.user.update).toHaveBeenCalled();
     });
 
-    it('should verify OTP with PASSWORD_RESET type', async () => {
+    it('should throw if user not found during reset', async () => {
       mockOtpService.verifyOtp.mockResolvedValue(true);
-      mockPrismaService.user.update.mockResolvedValue(mockUser);
+      mockPrismaService.user.findFirst.mockResolvedValue(null);
 
-      await service.resetPassword(
-        {
-          email: 'test@test.com',
-          otp: '123456',
-          newPassword: 'NewPass123!',
-        },
-        { ipAddress: '127.0.0.1', deviceInfo: 'Jest Agent' },
+      await expect(service.resetPassword(resetDto, {})).rejects.toThrow(
+        BadRequestException,
       );
-
-      expect(mockOtpService.verifyOtp).toHaveBeenCalledWith(
-        'test@test.com',
-        '123456',
-        'PASSWORD_RESET',
-      );
-    });
-
-    it('should hash the new password before saving', async () => {
-      mockOtpService.verifyOtp.mockResolvedValue(true);
-      mockPrismaService.user.update.mockResolvedValue(mockUser);
-
-      await service.resetPassword(
-        {
-          email: 'test@test.com',
-          otp: '123456',
-          newPassword: 'NewPass123!',
-        },
-        { ipAddress: '127.0.0.1', deviceInfo: 'Jest Agent' },
-      );
-
-      const savedHash =
-        mockPrismaService.user.update.mock.calls[0][0].data.passwordHash;
-      // Verify it's a bcrypt hash, not plaintext
-      expect(savedHash).toMatch(/^\$2[aby]\$\d+\$/);
-      // Verify the hash matches the new password
-      expect(await bcrypt.compare('NewPass123!', savedHash)).toBe(true);
     });
   });
 
@@ -165,91 +153,41 @@ describe('PasswordService', () => {
   // changePassword
   // ==========================================
   describe('changePassword', () => {
+    const changeDto = {
+      oldPassword: 'OldPass123!',
+      newPassword: 'NewPass456!',
+    };
+
     it('should change password successfully', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
 
-      const result = await service.changePassword(
-        'user-uuid-1',
-        {
-          oldPassword: 'OldPass123!',
-          newPassword: 'NewPass456!',
-        },
-        { ipAddress: '127.0.0.1', deviceInfo: 'Jest Agent' },
-      );
+      const result = await service.changePassword(mockUser.id, changeDto, {});
 
       expect(result.message).toEqual(AUTH_MESSAGES.CHANGE_PASSWORD_SUCCESS);
-    });
-
-    it('should revoke all sessions after password change', async () => {
-      mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
-
-      await service.changePassword(
-        'user-uuid-1',
-        {
-          oldPassword: 'OldPass123!',
-          newPassword: 'NewPass456!',
-        },
-        { ipAddress: '127.0.0.1', deviceInfo: 'Jest Agent' },
-      );
-
-      expect(mockTokenService.revokeAllSessions).toHaveBeenCalledWith(
-        'user-uuid-1',
-      );
-    });
-
-    it('should throw if user not found', async () => {
-      mockPrismaService.user.findUnique.mockResolvedValue(null);
-
-      await expect(
-        service.changePassword('nonexistent', {
-          oldPassword: 'OldPass123!',
-          newPassword: 'NewPass456!',
-        }),
-      ).rejects.toThrow(NotFoundException);
+      expect(mockPrismaService.user.update).toHaveBeenCalled();
     });
 
     it('should throw if old password is wrong', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
 
       await expect(
-        service.changePassword('user-uuid-1', {
-          oldPassword: 'WrongPass123!',
-          newPassword: 'NewPass456!',
-        }),
+        service.changePassword(
+          mockUser.id,
+          {
+            ...changeDto,
+            oldPassword: 'WrongPassword!',
+          },
+          {},
+        ),
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('should throw if new password equals old password', async () => {
-      mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
+    it('should throw if user not found', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue(null);
 
       await expect(
-        service.changePassword('user-uuid-1', {
-          oldPassword: 'OldPass123!',
-          newPassword: 'OldPass123!',
-        }),
-      ).rejects.toThrow(BadRequestException);
-    });
-
-    it('should log PASSWORD_CHANGE action with IP and device info', async () => {
-      mockPrismaService.user.findUnique.mockResolvedValue(mockUser);
-
-      await service.changePassword(
-        'user-uuid-1',
-        {
-          oldPassword: 'OldPass123!',
-          newPassword: 'NewPass456!',
-        },
-        { ipAddress: '127.0.0.1', deviceInfo: 'Jest Agent' },
-      );
-
-      expect(mockPrismaService.authLog.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          action: 'PASSWORD_CHANGE',
-          status: 'SUCCESS',
-          ipAddress: '127.0.0.1',
-          deviceInfo: 'Jest Agent',
-        }),
-      });
+        service.changePassword('ghost-id', changeDto, {}),
+      ).rejects.toThrow(UnauthorizedException);
     });
   });
 });

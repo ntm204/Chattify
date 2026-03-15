@@ -1,0 +1,9 @@
+export const OTP_PURPOSE = {
+  VERIFICATION: 'VERIFICATION',
+  PASSWORD_RESET: 'PASSWORD_RESET',
+  PHONE_LOGIN: 'PHONE_LOGIN',
+  CHANGE_EMAIL: 'CHANGE_EMAIL',
+  CHANGE_PHONE: 'CHANGE_PHONE',
+} as const;
+
+export type OtpPurpose = (typeof OTP_PURPOSE)[keyof typeof OTP_PURPOSE];

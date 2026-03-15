@@ -1,155 +1,65 @@
-### File này dùng để test API trực tiếp trong VS Code (Yêu cầu cài Extension REST Client)
+@baseUrl = http://localhost:5000/api/v1
+@contentType = application/json
 
-@baseUrl = http://localhost:3000/api/v1
-
-### 1. Đăng ký tài khoản (Register)
-# Hệ thống sẽ trả về userId và yêu cầu kiểm tra email để nhận mã OTP
+### Register
 POST {{baseUrl}}/auth/register
-Content-Type: application/json
+Content-Type: {{contentType}}
 
 {
-    "username": "minhnguyen02",
-    "email": "minhnguyen02@chatiffy.com",
-    "password": "Password123!",
-    "displayName": "Tuấn Minh"
+  "email": "test-user@example.com",
+  "username": "testuser",
+  "displayName": "Test User",
+  "password": "StrongPassword123!"
 }
 
-###
-
-### 2. Xác thực OTP (Verify Email)
-# Lấy mã 6 số từ Terminal (vì đang dùng Ethereal test) hoặc check log mail
-POST {{baseUrl}}/auth/verify-email
-Content-Type: application/json
+### Verify OTP
+POST {{baseUrl}}/auth/verify-otp
+Content-Type: {{contentType}}
 
 {
-    "email": "minhnguyen02@chatiffy.com",
-    "otp": "642225"
+  "identifier": "test-user@example.com",
+  "otp": "295338"
 }
 
-###
-
-### 2.5. Gửi lại mã OTP (Trong trường hợp mã cũ hết hạn)
-POST {{baseUrl}}/auth/resend-otp
-Content-Type: application/json
-
-{
-    "email": "minhnguyen02@chatiffy.com"
-}
-
-###
-
-### 3. Đăng nhập (Login - Thành công lấy Toke, sinh Session)
-# Yêu cầu: Đã xác thực OTP ở bước 2
-# @name loginRequest
+### Login
 POST {{baseUrl}}/auth/login
-Content-Type: application/json
+Content-Type: {{contentType}}
 
 {
-    "email": "minhnguyen02@chatiffy.com",
-    "password": "Password123!",
-    "deviceInfo": "MacBook Pro M3 - Chrome",
-    "ipAddress": "192.168.1.55"
+  "identifier": "test-user@example.com",
+  "password": "StrongPassword123!"
 }
 
-###
-
-### 3.5. TEST BẢO MẬT: Cố tình đăng nhập sai Password (Để hệ thống ghi AuthLog cảnh báo)
-POST {{baseUrl}}/auth/login
-Content-Type: application/json
-
-{
-    "email": "minhnguyen02@chatiffy.com",
-    "password": "SaiPasswordRoi123!",
-    "deviceInfo": "Unknown Device - Hacker",
-    "ipAddress": "10.0.0.99"
-}
-
-###
-
-### 4. Lấy thông tin tài khoản (Yêu cầu Token)
-# Extension REST Client sẽ tự động nhúng Cookie vào Header sau khi Login thành công ở bước 3
-GET {{baseUrl}}/users/me
-
-###
-
-### 5. Quản lý Thiết bị: Lấy danh sách các Phiên đăng nhập đang hoạt động
-# API này sẽ trả về danh sách các thiết bị bạn đang đăng nhập giống Facebook.
-GET {{baseUrl}}/auth/sessions
-
-###
-
-### 6. Quản lý Thiết bị: Đăng xuất từ xa khỏi một thiết bị cụ thể
-# Thay thế {ID_THIET_BI} bằng id của thiết bị lấy được ở BƯỚC 5
-DELETE {{baseUrl}}/auth/sessions/{ID_THIET_BI}
-
-###
-
-### 7. Lấy Token mới khi bị hết hạn 15 phút (Refresh Token / Xoay Vòng)
-# Hệ thống sẽ TỰ ĐỘNG đọc refresh_token từ Cookie. Không cần gửi body.
+### Refresh
 POST {{baseUrl}}/auth/refresh
 
-###
+### My Sessions
+GET {{baseUrl}}/auth/sessions
 
-### 8. Quên mật khẩu - Yêu cầu gửi mã OTP
-POST {{baseUrl}}/auth/forgot-password
-Content-Type: application/json
+### My Profile
+GET {{baseUrl}}/users/me
 
-{
-    "email": "testuser1@example.com"
-}
-
-###
-
-### 9. Đặt lại Mật khẩu báo bằng OTP
-# Mật khẩu mới cần dài ít nhất 8 ký tự, có Số, chữ Thường và chữ Hoa
-POST {{baseUrl}}/auth/reset-password
-Content-Type: application/json
+### Update Profile
+POST {{baseUrl}}/users/profile
+Content-Type: {{contentType}}
 
 {
-    "email": "testuser1@example.com",
-    "otp": "THAY_MA_OTP_ZO_DAY",
-    "newPassword": "NewStrongPassword123!"
+  "displayName": "Updated Name"
 }
 
-###
-
-### 10. Tạo mã QR cho 2FA (Yêu cầu Cookie đăng nhập)
-# Extension REST Client sẽ tự động gửi Cookie access_token
+### 2FA Generate
 POST {{baseUrl}}/auth/2fa/generate
-Content-Type: application/json
 
-###
-
-### 11. Bật 2FA (Yêu cầu Cookie đăng nhập)
-# Lấy mã 6 số từ Google Authenticator trên điện thoại
+### 2FA Turn On
 POST {{baseUrl}}/auth/2fa/turn-on
-Content-Type: application/json
+Content-Type: {{contentType}}
 
 {
-    "code": "123456"
+  "code": "123456"
 }
 
-###
+### Logout
+POST {{baseUrl}}/auth/logout
 
-### 12. Xác minh Đăng nhập 2 Bước (2FA Verify Login)
-# Khi Login thành công nhưng User có bật 2FA, hệ thống trả về { requires2FA: true, tempToken: "..." }
-# Truyền tempToken và mã 6 số vào đây để đổi lấy Cookie thật.
-POST {{baseUrl}}/auth/2fa/verify
-Content-Type: application/json
-
-{
-    "tempToken": "THAY_BANG_TEMP_TOKEN",
-    "code": "123456"
-}
-
-###
-
-### 13. Tắt 2FA (Yêu cầu Cookie đăng nhập)
-POST {{baseUrl}}/auth/2fa/turn-off
-Content-Type: application/json
-
-{
-    "code": "123456"
-}
-
-###
+### Revoke All
+POST {{baseUrl}}/auth/sessions/revoke-all

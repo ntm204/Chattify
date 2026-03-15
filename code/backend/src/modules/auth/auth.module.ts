@@ -13,6 +13,7 @@ import { LockoutService } from './services/lockout.service';
 import { PasswordService } from './services/password.service';
 import { SessionCleanupCron } from './cron/session-cleanup.cron';
 import { AUTH_CONSTANTS } from '../../core/config/auth.constants';
+import { AuthAuditService } from './services/auth-audit.service';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { AUTH_CONSTANTS } from '../../core/config/auth.constants';
     TwoFactorService,
     LockoutService,
     PasswordService,
+    AuthAuditService,
     SessionCleanupCron,
   ],
   exports: [AuthService, JwtStrategy, PassportModule],

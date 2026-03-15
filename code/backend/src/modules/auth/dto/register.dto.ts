@@ -5,18 +5,19 @@ import {
   MinLength,
   Matches,
   MaxLength,
+  IsOptional,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 
 export class RegisterDto {
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @Matches(/^[a-zA-Z0-9_]+$/, {
     message: 'Username chỉ được chứa chữ cái không dấu, số và gạch dưới (_)',
   })
   @MinLength(3, { message: 'Username phải từ 3 ký tự trở lên' })
   @MaxLength(20, { message: 'Username không vượt quá 20 ký tự' })
-  username: string;
+  username?: string;
 
   @Transform(({ value }: { value: string }) => value?.toLowerCase().trim())
   @IsEmail({}, { message: 'Định dạng email không hợp lệ' })
@@ -35,6 +36,9 @@ export class RegisterDto {
 
   @IsString()
   @IsNotEmpty()
+  @Transform(({ value, obj }: { value: string; obj?: { name?: string } }) =>
+    (value || obj?.name || '').trim(),
+  )
   @MaxLength(50, { message: 'Tên hiển thị không được vượt quá 50 ký tự' })
   displayName: string;
 }

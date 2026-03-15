@@ -1,9 +1,13 @@
-import { IsEmail, IsNotEmpty } from 'class-validator';
+import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { AuthUtils } from '../../../core/utils/auth.util';
 
 export class ForgotPasswordDto {
-  @Transform(({ value }: { value: string }) => value?.toLowerCase().trim())
-  @IsEmail({}, { message: 'Định dạng email không hợp lệ' })
-  @IsNotEmpty({ message: 'Email không được để trống' })
-  email: string;
+  @Transform(({ value, obj }: { value: string; obj?: { email?: string } }) =>
+    AuthUtils.normalizeIdentifier(value || obj?.email || ''),
+  )
+  @IsString()
+  @IsNotEmpty({ message: 'Email hoặc Số điện thoại không được để trống' })
+  @MaxLength(100)
+  identifier: string;
 }

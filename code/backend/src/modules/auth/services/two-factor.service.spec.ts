@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { TwoFactorService } from './two-factor.service';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
+import { AUTH_MESSAGES } from '../../../core/config/auth.messages';
 
 // ==========================================
 // Mocks
@@ -153,10 +154,10 @@ describe('TwoFactorService', () => {
 
       const result = await service.turnOnTwoFactorAuth('user-uuid-1', '123456');
 
-      expect(result.message).toContain('Bật 2FA thành công');
+      expect(result.message).toEqual(AUTH_MESSAGES.TFA_ENABLE_SUCCESS);
       expect(mockPrismaService.twoFactorAuth.update).toHaveBeenCalledWith({
         where: { userId: 'user-uuid-1' },
-        data: { isEnabled: true },
+        data: { isEnabled: true, recoveryCodes: expect.any(Array) },
       });
     });
 

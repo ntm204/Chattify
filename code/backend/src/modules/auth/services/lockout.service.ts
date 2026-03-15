@@ -2,10 +2,11 @@ import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { RedisService } from '../../../core/redis/redis.service';
 import { AUTH_CONSTANTS } from '../../../core/config/auth.constants';
 import { AUTH_MESSAGES } from '../../../core/config/auth.messages';
+import { LogUtils } from '../../../core/utils/log.util';
 
 /**
  * LockoutService
- * Manages dual-layer rate limiting and brute-force protection (Email + IP) via Redis.
+ * Manages dual-layer rate limiting and brute-force protection (Identifier + IP) via Redis.
  */
 @Injectable()
 export class LockoutService {
@@ -13,8 +14,8 @@ export class LockoutService {
 
   constructor(private readonly redisService: RedisService) {}
 
-  async checkAccountLockout(email: string): Promise<void> {
-    const lockoutKey = `login_lockout:${email}`;
+  async checkAccountLockout(identifier: string): Promise<void> {
+    const lockoutKey = `login_lockout:${identifier}`;
     const isLocked = await this.redisService.getCache(lockoutKey);
     if (isLocked) {
       const redisClient = this.redisService.getClient();
@@ -45,30 +46,32 @@ export class LockoutService {
   }
 
   async incrementLoginAttempts(
-    email: string,
+    identifier: string,
     ipAddress?: string,
-  ): Promise<{ emailAttempts: number; shouldWarn: boolean }> {
+  ): Promise<{ attempts: number; shouldWarn: boolean }> {
     const redisClient = this.redisService.getClient();
 
-    const attemptsKey = `login_attempts:${email}`;
-    const lockoutKey = `login_lockout:${email}`;
+    const attemptsKey = `login_attempts:${identifier}`;
+    const lockoutKey = `login_lockout:${identifier}`;
 
-    const emailAttempts = await redisClient.incr(attemptsKey);
-    if (emailAttempts === 1) {
+    const attempts = await redisClient.incr(attemptsKey);
+    if (attempts === 1) {
       await redisClient.expire(
         attemptsKey,
         AUTH_CONSTANTS.LOCKOUT_DURATION_SECONDS,
       );
     }
 
-    if (emailAttempts >= AUTH_CONSTANTS.MAX_LOGIN_ATTEMPTS) {
+    if (attempts >= AUTH_CONSTANTS.MAX_LOGIN_ATTEMPTS) {
       await this.redisService.setCache(
         lockoutKey,
         '1',
         AUTH_CONSTANTS.LOCKOUT_DURATION_SECONDS,
       );
       await this.redisService.deleteCache(attemptsKey);
-      this.logger.warn(`Account lockout triggered for email: ${email}`);
+      this.logger.warn(
+        `Account lockout triggered for identifier: ${LogUtils.maskIdentifier(identifier)}`,
+      );
     }
 
     if (ipAddress) {
@@ -90,19 +93,19 @@ export class LockoutService {
           AUTH_CONSTANTS.IP_LOCKOUT_DURATION_SECONDS,
         );
         await this.redisService.deleteCache(ipAttemptsKey);
-        this.logger.warn(`IP lockout triggered for: ${ipAddress}`);
+        this.logger.warn(`IP lockout triggered for IP (masked)`);
       }
     }
 
-    const remaining = AUTH_CONSTANTS.MAX_LOGIN_ATTEMPTS - emailAttempts;
+    const remaining = AUTH_CONSTANTS.MAX_LOGIN_ATTEMPTS - attempts;
     const shouldWarn =
       remaining > 0 && remaining <= AUTH_CONSTANTS.LOCKOUT_WARNING_THRESHOLD;
 
-    return { emailAttempts, shouldWarn };
+    return { attempts, shouldWarn };
   }
 
-  async resetLoginAttempts(email: string): Promise<void> {
-    await this.redisService.deleteCache(`login_attempts:${email}`);
-    await this.redisService.deleteCache(`login_lockout:${email}`);
+  async resetLoginAttempts(identifier: string): Promise<void> {
+    await this.redisService.deleteCache(`login_attempts:${identifier}`);
+    await this.redisService.deleteCache(`login_lockout:${identifier}`);
   }
 }

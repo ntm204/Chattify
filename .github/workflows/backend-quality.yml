@@ -1,0 +1,119 @@
+name: Backend Quality Gate
+
+on:
+  pull_request:
+    paths:
+      - code/backend/**
+      - .github/workflows/backend-quality.yml
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - code/backend/**
+      - .github/workflows/backend-quality.yml
+  schedule:
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+
+jobs:
+  backend-smoke:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: code/backend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: code/backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint auth scope
+        run: npx eslint "src/modules/auth/**/*.ts" "src/core/config/auth.messages.ts" "src/core/utils/auth.util.ts" "src/common/interfaces/authenticated-request.interface.ts" "test/app.e2e-spec.ts"
+
+      - name: Run auth module tests
+        run: npm test -- src/modules/auth
+
+      - name: Run auth smoke e2e
+        run: npm run test:e2e:auth-smoke
+
+      - name: Build backend
+        run: npm run build
+
+  backend-auth-integration:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: code/backend
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: root
+          POSTGRES_PASSWORD: rootpassword
+          POSTGRES_DB: chatiffy
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U root -d chatiffy"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      PORT: 5000
+      DATABASE_URL: postgresql://root:rootpassword@localhost:5432/chatiffy?schema=public
+      MONGODB_URI: mongodb://localhost:27017/chatiffy_test
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: test-jwt-secret-0123456789
+      JWT_2FA_SECRET: test-jwt-2fa-secret-0123456789
+      TWO_FACTOR_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      TWO_FACTOR_SALT: 0123456789abcdef0123456789abcdef
+      SMTP_HOST: localhost
+      SMTP_PORT: 1025
+      SMTP_USER: test
+      SMTP_PASS: test
+      CORS_ORIGIN: http://localhost:3000,http://localhost:3001
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: code/backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Apply Prisma migrations
+        run: npx prisma migrate deploy
+
+      - name: Run auth integration e2e
+        run: npm run test:e2e:auth-integration

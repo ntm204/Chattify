@@ -17,13 +17,14 @@ export const AUTH_CONSTANTS = {
   IP_LOCKOUT_DURATION_SECONDS: 900, // 15 minutes
 
   // ===== Password =====
-  SALT_ROUNDS: 12,
+  HIBP_TIMEOUT_MS: 3000,
 
   // ===== Session & Token =====
   ACCESS_TOKEN_EXPIRY: '15m',
   SESSION_EXPIRY_MS: 7 * 24 * 60 * 60 * 1000,
   SESSION_EXPIRY_SECONDS: 7 * 24 * 60 * 60,
   MAX_SESSIONS_PER_USER: 5,
+  REFRESH_TOKEN_GRACE_PERIOD_SECONDS: 30, // 30 seconds for concurrent requests
 
   // ===== Cookie =====
   COOKIE_ACCESS_TOKEN_MAX_AGE: 15 * 60 * 1000,

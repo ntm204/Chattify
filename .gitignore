@@ -1,63 +1,51 @@
-# ==========================================================
-# Cấu hình Git Ignore cho toàn bộ dự án Chatiffy
-# ==========================================================
-
-# 1. Hệ điều hành macOS (Tùy chọn hiển thị thư mục ẩn)
+# OS
 **/.DS_Store
 .AppleDouble
 .LSOverride
 Icon
 ._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
 
-# 2. Node.js & Dependencies
+# Node
 **/node_modules/
-npm-debug.log
-yarn-error.log
-yarn-debug.log
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+**/coverage/
+**/test-results/
 
-# 3. Môi trường (Environment Variables) - RẤT QUAN TRỌNG
+# Env
 **/.env
-**/.env.production
-**/.env.local
-**/.env.development.local
-**/.env.test.local
-**/.env.production.local
+**/.env.*
+!**/.env.example
 
-# 4. Build output (Sản phẩm sau khi build)
-# Backend NestJS
+# Build
 **/dist/
 **/dist-server/
-**/*.tsbuildinfo
-
-# Frontend Next.js
 **/.next/
 **/out/
 **/build/
+**/*.tsbuildinfo
 
-# 5. IDEs & Editors
+# IDE
 **/.vscode/
 **/.idea/
 **/*.swp
 **/*.swo
 **/.history/
 
-# 6. Prisma & Database
+# Database
 **/prisma/db.sqlite
 **/prisma/db.sqlite-journal
 
-# 7. Log files
-**/logs
-**/*.log
-**/npm-debug.log*
-
-# 8. Temporary files (File tạm của macOS hoặc hệ thống)
+# Temp
 **/.tmp
 **/tmp
 
-# 9. Thư mục Tài liệu (Documentation & AI Skills) - KHÔNG ĐƯA LÊN MẠNG
+# Docs/Skills
 /prod/
 /skills/
-
-# Chú ý: 
-# Chúng ta commit file `docker-compose.yml` để dev khác có thể clone chạy được.
-# Giữ lại `package.json` và `package-lock.json` của cả frontend/backend.

@@ -6,6 +6,7 @@ import { UsersModule } from './modules/users/users.module';
 import { PrismaModule } from './core/prisma/prisma.module';
 import { MailModule } from './core/mail/mail.module';
 import { RedisModule } from './core/redis/redis.module';
+import { SmsModule } from './core/sms/sms.module';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
@@ -27,6 +28,7 @@ import { envValidationSchema } from './common/config/env.validation';
     ]),
     RedisModule,
     MailModule,
+    SmsModule,
     AuthModule,
     UsersModule,
     PrismaModule,
