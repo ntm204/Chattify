@@ -274,9 +274,15 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Post('2fa/turn-on')
-  async turnOn2FA(@Req() req: express.Request, @Body() { code }: Toggle2FACodeDto) {
+  async turnOn2FA(
+    @Req() req: express.Request,
+    @Body() { code }: Toggle2FACodeDto,
+  ) {
     const user = this.getAuthenticatedUser(req);
-    const result = await this.twoFactorService.turnOnTwoFactorAuth(user.id, code);
+    const result = await this.twoFactorService.turnOnTwoFactorAuth(
+      user.id,
+      code,
+    );
 
     void this.authAuditService
       .log({
@@ -291,9 +297,15 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Post('2fa/turn-off')
-  async turnOff2FA(@Req() req: express.Request, @Body() { code }: Toggle2FACodeDto) {
+  async turnOff2FA(
+    @Req() req: express.Request,
+    @Body() { code }: Toggle2FACodeDto,
+  ) {
     const user = this.getAuthenticatedUser(req);
-    const result = await this.twoFactorService.turnOffTwoFactorAuth(user.id, code);
+    const result = await this.twoFactorService.turnOffTwoFactorAuth(
+      user.id,
+      code,
+    );
 
     void this.authAuditService
       .log({

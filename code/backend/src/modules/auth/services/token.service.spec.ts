@@ -131,7 +131,11 @@ describe('TokenService', () => {
     });
 
     it('should create a new session and cache in Redis', async () => {
-      await service.createSessionForUser('user-uuid-1', '1.2.3.4', 'Test Agent');
+      await service.createSessionForUser(
+        'user-uuid-1',
+        '1.2.3.4',
+        'Test Agent',
+      );
 
       expect(mockTx.userSession.create).toHaveBeenCalled();
       expect(mockRedisPipeline.setex).toHaveBeenCalledWith(
@@ -142,7 +146,11 @@ describe('TokenService', () => {
     });
 
     it('should return raw (unhashed) refresh token for cookie use', async () => {
-      const result = await service.createSessionForUser('user-uuid-1', '1.2.3.4', 'Test Agent');
+      const result = await service.createSessionForUser(
+        'user-uuid-1',
+        '1.2.3.4',
+        'Test Agent',
+      );
 
       // refreshToken should be the raw hex token (64 chars), not the hashed one
       expect(result.refreshToken).toHaveLength(64);
@@ -155,7 +163,11 @@ describe('TokenService', () => {
       );
       mockTx.userSession.findMany.mockResolvedValue(manySessions);
 
-      await service.createSessionForUser('user-uuid-1', '1.2.3.4', 'Test Agent');
+      await service.createSessionForUser(
+        'user-uuid-1',
+        '1.2.3.4',
+        'Test Agent',
+      );
 
       expect(mockTx.userSession.updateMany).toHaveBeenCalledWith({
         where: {
@@ -166,7 +178,11 @@ describe('TokenService', () => {
     });
 
     it('should store only safe user data in Redis cache (no passwordHash)', async () => {
-      await service.createSessionForUser('user-uuid-1', '1.2.3.4', 'Test Agent');
+      await service.createSessionForUser(
+        'user-uuid-1',
+        '1.2.3.4',
+        'Test Agent',
+      );
 
       const cachedJson = mockRedisPipeline.setex.mock.calls[0][2];
       const cachedData = JSON.parse(cachedJson);
@@ -186,7 +202,11 @@ describe('TokenService', () => {
       mockRedisService.getCache.mockResolvedValue(null); // no reuse flag
       mockPrismaService.userSession.findFirst.mockResolvedValue(mockSession);
 
-      const result = await service.refreshTokens('valid-raw-token', '1.2.3.4', 'Test Agent');
+      const result = await service.refreshTokens(
+        'valid-raw-token',
+        '1.2.3.4',
+        'Test Agent',
+      );
 
       expect(result).toHaveProperty('access_token');
       expect(result).toHaveProperty('refresh_token');
@@ -207,21 +227,20 @@ describe('TokenService', () => {
 
     it('🚨 should REVOKE ALL SESSIONS if rotated token is reused (token theft detection)', async () => {
       // Simulate: old rotated token found in Redis = reuse!
-      mockRedisService.getCache
-        .mockResolvedValueOnce('user-uuid-1'); // rotated_refresh found
+      mockRedisService.getCache.mockResolvedValueOnce('user-uuid-1'); // rotated_refresh found
 
-      await expect(service.refreshTokens('stolen-old-token', '1.2.3.4', 'Test Agent')).rejects.toThrow(
-        UnauthorizedException,
-      );
+      await expect(
+        service.refreshTokens('stolen-old-token', '1.2.3.4', 'Test Agent'),
+      ).rejects.toThrow(UnauthorizedException);
     });
 
     it('should throw if session not found (invalid token)', async () => {
       mockRedisService.getCache.mockResolvedValue(null);
       mockPrismaService.userSession.findFirst.mockResolvedValue(null);
 
-      await expect(service.refreshTokens('invalid-token', '1.2.3.4', 'Test Agent')).rejects.toThrow(
-        UnauthorizedException,
-      );
+      await expect(
+        service.refreshTokens('invalid-token', '1.2.3.4', 'Test Agent'),
+      ).rejects.toThrow(UnauthorizedException);
     });
 
     it('should throw and revoke expired session', async () => {
@@ -232,9 +251,9 @@ describe('TokenService', () => {
       mockRedisService.getCache.mockResolvedValue(null);
       mockPrismaService.userSession.findFirst.mockResolvedValue(expiredSession);
 
-      await expect(service.refreshTokens('expired-token', '1.2.3.4', 'Test Agent')).rejects.toThrow(
-        UnauthorizedException,
-      );
+      await expect(
+        service.refreshTokens('expired-token', '1.2.3.4', 'Test Agent'),
+      ).rejects.toThrow(UnauthorizedException);
     });
   });
 
