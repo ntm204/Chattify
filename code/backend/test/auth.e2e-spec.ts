@@ -11,6 +11,7 @@ import { TwoFactorService } from '../src/modules/auth/services/two-factor.servic
 import { ConfigService } from '@nestjs/config';
 import { RedisService } from '../src/core/redis/redis.service';
 import { AUTH_MESSAGES } from '../src/core/config/auth.messages';
+import { AuthAuditService } from '../src/modules/auth/services/auth-audit.service';
 
 const getCookieValue = (
   setCookies: string[] | undefined,
@@ -75,6 +76,10 @@ describe('Auth Smoke (e2e)', () => {
     getCache: jest.fn(),
   };
 
+  const authAuditService = {
+    log: jest.fn().mockResolvedValue(undefined),
+  };
+
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       controllers: [AuthController],
@@ -92,10 +97,15 @@ describe('Auth Smoke (e2e)', () => {
           provide: RedisService,
           useValue: redisService,
         },
+        {
+          provide: AuthAuditService,
+          useValue: authAuditService,
+        },
       ],
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    app.setGlobalPrefix('api/v1');
     app.use(cookieParser());
     app.useGlobalPipes(
       new ValidationPipe({
@@ -178,7 +188,11 @@ describe('Auth Smoke (e2e)', () => {
       .expect(201)
       .expect({ message: AUTH_MESSAGES.REFRESH_TOKEN_SUCCESS });
 
-    expect(authService.refreshTokens).toHaveBeenCalledWith('refresh-old');
+    expect(authService.refreshTokens).toHaveBeenCalledWith(
+      'refresh-old',
+      '::ffff:127.0.0.1',
+      'Unknown',
+    );
     const setCookies = toCookieArray(response.headers['set-cookie']);
     expect(getCookieValue(setCookies, 'access_token')).toBeTruthy();
     expect(getCookieValue(setCookies, 'refresh_token')).toBeTruthy();
